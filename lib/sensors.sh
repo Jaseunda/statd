@@ -43,45 +43,45 @@ _fallback_uptime() {
 # ---- Dispatchers ----
 
 get_temp() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_temp || _linux_get_temp
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_temp; else _linux_get_temp; fi
 }
 
 get_cpu_freq() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_cpu_freq || _linux_get_cpu_freq
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_cpu_freq; else _linux_get_cpu_freq; fi
 }
 
-# Returns: <total> <idle>  (jiffies on Linux, tenths-of-percent on macOS)
+# Returns: <total> <idle> (or PCT <val>)
 get_cpu_raw() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_cpu_raw || _linux_get_cpu_raw
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_cpu_raw; else _linux_get_cpu_raw; fi
 }
 
 # Returns total idle microseconds across all cores (Linux only).
 get_idle_us() {
-    [ "$OS_TYPE" = "linux" ] && _linux_get_idle_us || printf '0'
+    if [ "$OS_TYPE" = "linux" ]; then _linux_get_idle_us; else printf '0'; fi
 }
 
 # Returns "core idle_us" lines (Linux only; macOS yields nothing).
 get_core_idle() {
-    [ "$OS_TYPE" = "linux" ] && _linux_get_core_idle || true
+    if [ "$OS_TYPE" = "linux" ]; then _linux_get_core_idle; else true; fi
 }
 
 # Returns: <total_kB> <used_kB> <swap_total_kB> <swap_used_kB>
 get_memory() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_memory || _linux_get_memory
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_memory; else _linux_get_memory; fi
 }
 
 # Returns: <pct> <status>  or empty string if no battery detected.
 get_battery() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_battery || _linux_get_battery
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_battery; else _linux_get_battery; fi
 }
 
 # Returns: <L1> <L5> <L15> <running/total>
 get_loadavg() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_loadavg || _linux_get_loadavg
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_loadavg; else _linux_get_loadavg; fi
 }
 
 get_uptime() {
-    [ "$OS_TYPE" = "macos" ] && _macos_get_uptime || _linux_get_uptime
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_uptime; else _linux_get_uptime; fi
 }
 
 # Returns: <total_bytes> <used_bytes>  for $HOME filesystem.
@@ -91,7 +91,7 @@ get_disk() {
 
 # find_llama_pid — returns PID of a running llama process, or empty.
 find_llama_pid() {
-    [ "$OS_TYPE" = "macos" ] && _macos_find_llama_pid || _linux_find_llama_pid
+    if [ "$OS_TYPE" = "macos" ]; then _macos_find_llama_pid; else _linux_find_llama_pid; fi
 }
 
 # get_llama_proc_stats <pid>
@@ -100,6 +100,9 @@ find_llama_pid() {
 # macOS: cpu_pct (integer), rss in kB
 get_llama_proc_stats() {
     local pid=$1
-    [ "$OS_TYPE" = "macos" ] && _macos_get_llama_proc_stats "$pid" \
-                              || _linux_get_llama_proc_stats "$pid"
+    if [ "$OS_TYPE" = "macos" ]; then
+        _macos_get_llama_proc_stats "$pid"
+    else
+        _linux_get_llama_proc_stats "$pid"
+    fi
 }

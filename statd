@@ -314,7 +314,12 @@ while true; do
     # ---- CPU% ----
     CPU='--'
     read -r CPU_TOTAL CPU_IDLE <<< "$(get_cpu_raw)"
-    if [[ "$CPU_TOTAL" =~ ^[0-9]+$ ]]; then
+    if [[ "$CPU_TOTAL" == "PCT" ]]; then
+        CPU="$CPU_IDLE"
+        [[ "$CPU" =~ ^[0-9]+$ ]] || CPU=0
+        (( CPU < 0 )) && CPU=0
+        (( CPU > 100 )) && CPU=100
+    elif [[ "$CPU_TOTAL" =~ ^[0-9]+$ ]]; then
         if (( PREV_CPU_TOTAL > 0 )); then
             C_DT=$(( CPU_TOTAL - PREV_CPU_TOTAL ))
             C_IDLE=$(( CPU_IDLE - PREV_CPU_IDLE ))

@@ -62,12 +62,16 @@ _macos_get_cpu_freq() {
 # /proc/stat's "cpu" line: user nice sys idle intr
 #
 # This replaces the old `top -l 1` approach which blocked for ~500ms.
-# sysctl returns in <5ms, making macOS CPU% delta-based and accurate.
+# Returns: PCT <pct>
 _macos_get_cpu_raw() {
-    local u n s i intr
-    read -r u n s i intr <<< "$(sysctl -n kern.cp_time 2>/dev/null)"
-    [[ "$u" =~ ^[0-9]+$ ]] || return
-    printf '%d %d' $(( u + n + s + i + intr )) "$i"
+    local n="${NCPU:-1}"
+    (( n < 1 )) && n=1
+    ps -A -o %cpu 2>/dev/null | awk -v n="$n" '{s+=$1} END {
+        pct=int(s/n + 0.5)
+        if (pct > 100) pct=100
+        if (pct < 0) pct=0
+        printf "PCT %d\n", pct
+    }'
 }
 
 # Returns: <total_kB> <used_kB> <swap_total_kB> <swap_used_kB>
@@ -87,22 +91,22 @@ _macos_get_memory() {
 
     local swap_line swap_total_bytes=0 swap_used_bytes=0
     swap_line=$(sysctl vm.swapusage 2>/dev/null)
-    swap_total_bytes=$(printf '%s' "$swap_line" | awk '
-        match($0,/total = ([0-9]+\.[0-9]+)([KMGT])/,a) {
-            v=a[1]; u=a[2]
-            if      (u=="K") v*=1024
-            else if (u=="M") v*=1048576
-            else if (u=="G") v*=1073741824
-            printf "%d", v
-        }')
-    swap_used_bytes=$(printf '%s' "$swap_line" | awk '
-        match($0,/used = ([0-9]+\.[0-9]+)([KMGT])/,a) {
-            v=a[1]; u=a[2]
-            if      (u=="K") v*=1024
-            else if (u=="M") v*=1048576
-            else if (u=="G") v*=1073741824
-            printf "%d", v
-        }')
+    read -r swap_total_bytes swap_used_bytes <<< "$(printf '%s' "$swap_line" | awk '
+        function to_b(s,   v, u) {
+            u = substr(s, length(s))
+            v = substr(s, 1, length(s)-1) + 0
+            if      (u == "K") v *= 1024
+            else if (u == "M") v *= 1048576
+            else if (u == "G") v *= 1073741824
+            return int(v)
+        }
+        {
+            for (i=1; i<=NF; i++) {
+                if ($i == "total") tot = to_b($(i+2))
+                if ($i == "used")  usd = to_b($(i+2))
+            }
+            printf "%d %d\n", tot+0, usd+0
+        }')"
     [[ "$swap_total_bytes" =~ ^[0-9]+$ ]] || swap_total_bytes=0
     [[ "$swap_used_bytes"  =~ ^[0-9]+$ ]] || swap_used_bytes=0
 
