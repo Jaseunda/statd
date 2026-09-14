@@ -1349,33 +1349,49 @@ while true; do
     # ---- Per-core panel ----
     CORE_ROWS=()
     if (( CORES_SHOWN )); then
+        MAX_PER_ROW=$(( TOTALW - 2 ))
+        (( MAX_PER_ROW < 8 )) && MAX_PER_ROW=8
+
         case "$CORE_STYLE" in
             dots)
                 line="${C_GREY}c ${C_RESET}"
+                row_cnt=0
                 for (( c=0; c<NCPU; c++ )); do
+                    if (( row_cnt >= MAX_PER_ROW )); then
+                        CORE_ROWS+=("${line}${C_RESET}")
+                        line="  "
+                        row_cnt=0
+                    fi
                     p="${CORE_PCT[$c]:---}"
                     if [[ "$p" =~ ^[0-9]+$ ]]; then
                         line+="$(pct_color "$p")\xe2\x97\x8f"
                     else
                         line+="${C_GREY}\xc2\xb7"
                     fi
+                    (( row_cnt++ ))
                 done
                 CORE_ROWS+=("${line}${C_RESET}")
                 ;;
             spark)
-                SPK=$'\xe2\x96\x81\xe2\x96\x82\xe2\x96\x83\xe2\x96\x84\xe2\x96\x85\xe2\x96\x86\xe2\x96\x87\xe2\x96\x88'
+                SPK=(' ' '▂' '▃' '▄' '▅' '▆' '▇' '█')
                 line="${C_GREY}c ${C_RESET}"
+                row_cnt=0
                 for (( c=0; c<NCPU; c++ )); do
+                    if (( row_cnt >= MAX_PER_ROW )); then
+                        CORE_ROWS+=("${line}${C_RESET}")
+                        line="  "
+                        row_cnt=0
+                    fi
                     p="${CORE_PCT[$c]:---}"
                     if [[ "$p" =~ ^[0-9]+$ ]]; then
                         idx=$(( p * 8 / 100 ))
                         (( idx > 7 )) && idx=7
-                        # Extract the idx-th UTF-8 block character (each is 3 bytes)
-                        char=$(printf '%s' "$SPK" | cut -c$(( idx + 1 )))
+                        char="${SPK[$idx]}"
                         line+="$(pct_color "$p")${char}"
                     else
                         line+="${C_GREY}\xc2\xb7"
                     fi
+                    (( row_cnt++ ))
                 done
                 CORE_ROWS+=("${line}${C_RESET}")
                 ;;
