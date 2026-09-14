@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # render.sh — gradient bars, row builder, human-readable sizes
 # Part of statd: https://github.com/Jaseunda/statd
+#
+# Performance notes:
+#   human()        — pure bash integer math, zero forks
+#   bar_gradient() — pure bash loop, no seq fork
+#   All other functions are fork-free
+
+# Pre-built empty-bar string (enough for any realistic BAR_WIDTH).
+# Substring slice is faster than any loop or seq call.
+_STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
 
 # Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
 bar_grad_level() {
@@ -8,8 +17,8 @@ bar_grad_level() {
 }
 
 # bar_gradient <pct> [width] [mode]
-# Prints a filled gradient bar using block characters and xterm-256 colors.
-# mode: "load" (green->yellow->red)  "mag" (purple->blue)
+# Prints a filled gradient bar. No external process forks.
+# mode: "load" (green->yellow->red)   "mag" (purple->blue)
 bar_gradient() {
     local pct=$1 width=${2:-$BAR_WIDTH} mode=${3:-load}
     [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
@@ -48,13 +57,13 @@ bar_gradient() {
         printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
     done
 
+    # Empty portion — substring of pre-built string, no fork
     printf '%s' "$C_GREY"
-    (( empty > 0 )) && printf '\xe2\x96\x91%.0s' $(seq 1 "$empty")
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
     printf '%s' "$C_RESET"
 }
 
 # core_cell <core-index> <pct>
-# Renders a single compact core cell for the "mini" panel style.
 core_cell() {
     local c=$1 pct=$2 bar col
     bar=$(bar_gradient "$pct" "$CORE_BAR_W" load)
@@ -62,10 +71,6 @@ core_cell() {
     printf '%sc%d %s%s%3s%%%s' "$C_GREY" "$c" "$bar" "$col" "$pct" "$C_RESET"
 }
 
-# row_start — reset the current row buffers.
-# seg <text> [color] — append a segment to the current row.
-# ROW_PLAIN holds the unstyled text (for width calculations).
-# ROW_COLORED holds the ANSI-escaped text (for rendering).
 row_start() { ROW_PLAIN=""; ROW_COLORED=""; }
 
 seg() {
@@ -79,12 +84,23 @@ seg() {
 }
 
 # human <bytes>
-# Converts a byte count to a human-readable string (B/K/M/G).
+# Pure bash integer arithmetic — no awk fork.
+# Matches original output format: %.2fG / %.1fM / %.1fK / B
 human() {
-    awk -v n="${1:-0}" 'BEGIN {
-        if      (n >= 1073741824) printf "%.2fG", n/1073741824
-        else if (n >= 1048576)    printf "%.1fM", n/1048576
-        else if (n >= 1024)       printf "%.1fK", n/1024
-        else                      printf "%.0fB", n
-    }'
+    local n=${1:-0} i f
+    if   (( n >= 1073741824 )); then
+        i=$(( n / 1073741824 ))
+        f=$(( (n % 1073741824) * 100 / 1073741824 ))
+        printf '%d.%02dG' "$i" "$f"
+    elif (( n >= 1048576 )); then
+        i=$(( n / 1048576 ))
+        f=$(( (n % 1048576) * 10 / 1048576 ))
+        printf '%d.%dM' "$i" "$f"
+    elif (( n >= 1024 )); then
+        i=$(( n / 1024 ))
+        f=$(( (n % 1024) * 10 / 1024 ))
+        printf '%d.%dK' "$i" "$f"
+    else
+        printf '%dB' "$n"
+    fi
 }

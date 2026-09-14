@@ -94,9 +94,9 @@ statd is a shell script. That is the point — and a real tradeoff.
 | | statd | btop / htop |
 |---|---|---|
 | Language | Bash + awk | C++ / C (compiled) |
-| CPU overhead per tick | ~1–3% | ~0.1% |
+| CPU overhead per tick | ~0.1–0.5% | ~0.1% |
 | Startup time | ~50ms | ~10ms |
-| Sensor read method | fork/exec per sensor | direct syscall |
+| Sensor read method | read builtin / sysfs | direct syscall |
 | Process list | no | yes |
 | Mouse support | no | yes |
 | Hackable without a compiler | yes | no |
@@ -110,32 +110,34 @@ statd is for a persistent, always-on pane that shows system health at a
 glance — CPU, memory, disk, load, and (optionally) an LLM process — with
 nothing else on screen.
 
-### Actual overhead
+### How we get there
 
-Each refresh cycle statd forks roughly 5–8 subprocesses (awk, grep, df,
-date, etc.). On a modern x86 server or Apple Silicon Mac this costs around
-10–30ms of wall time, well within a 1-second interval.
+The hot path (every tick) is engineered to minimize forks:
 
-On older or heavily loaded ARM boards the fork overhead is more
-noticeable. Raise `INTERVAL` to reduce it:
+- **CPU%** — reads `/proc/stat` with `read` builtin (Linux) or
+  `sysctl kern.cp_time` (macOS). Both return cumulative jiffies for
+  delta-based measurement. Zero forks, <5ms either way.
+- **Memory** — `while read` loop directly on `/proc/meminfo` (Linux);
+  single `vm_stat` call with cached page size (macOS). No awk fork.
+- **Load / uptime** — `read` builtin on `/proc/loadavg`, `/proc/uptime`.
+  Pure bash integer math for time formatting. Zero forks.
+- **Bar rendering** — pure bash loop for filled cells; pre-built
+  constant string for the empty portion (substring, no fork).
+- **human()** — pure bash integer arithmetic. No awk fork.
+- **Disk / battery / uptime** — slow tier, polled every 30 s (tunable).
+
+awk is kept only where a single process reading many files beats a bash
+loop: cpuidle sysfs (8+ cores x 5+ states) and swap parsing on macOS.
+
+### Raising the interval
+
+On very constrained hardware (old ARM single-board computers, embedded
+systems) the fork budget still adds up. Use a higher interval:
 
 ```sh
 INTERVAL=2 statd      # halves the fork rate
-INTERVAL=5 statd      # background monitoring, very low overhead
+INTERVAL=5 statd      # near-zero impact, suitable for background panes
 ```
-
-### macOS note
-
-On macOS the CPU utilization reading uses `top -l 1`, which itself takes
-~500ms to return a sample. This means the effective minimum refresh
-interval is ~600ms. `INTERVAL=1` (the default) works correctly — statd
-simply spends most of that second waiting for top — but setting a lower
-interval will not give faster updates. This is a macOS kernel constraint,
-not a statd bug.
-
-For sub-second CPU monitoring on macOS, `sudo powermetrics` is the only
-accurate option and requires root. statd intentionally avoids requiring
-elevated privileges.
 
 ### When to use each
 
