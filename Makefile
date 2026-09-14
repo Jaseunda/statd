@@ -9,11 +9,18 @@ LIB_FILES   = lib/colors.sh \
                lib/sensors.sh \
                lib/llm.sh
 
-.PHONY: all install uninstall check
+.PHONY: all install uninstall check update bundle
 
 all:
 	@echo "statd is a shell script — nothing to compile."
 	@echo "Run 'make install' to install to $(BINDIR)."
+
+update:
+	@git pull
+	@$(MAKE) install
+
+bundle:
+	@./bundle.sh
 
 install: check
 	install -d "$(BINDIR)" "$(LIBDIR)"
