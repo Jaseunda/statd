@@ -13,12 +13,12 @@ _linux_get_temp() {
         [ -r "$f" ] || continue
         local typefile="${f%temp}type"
         [ -r "$typefile" ] || continue
-        read -r type < "$typefile" 2>/dev/null
+        { read -r type < "$typefile"; } 2>/dev/null
         case "$type" in
             cpu-0-*-usr|cpu-0-*-step|cpu-1-*-usr|cpu-1-*-step|\
             x86_pkg_temp|acpitz|coretemp|cpu_thermal|soc_thermal|\
             tsens_tz_sensor*|thermal)
-                read -r temp < "$f" 2>/dev/null
+                { read -r temp < "$f"; } 2>/dev/null
                 [[ "$temp" =~ ^[0-9]+$ ]] || continue
                 c=$(( temp / 1000 ))
                 (( c >= 0 && c <= 120 && c > max )) && max=$c
@@ -32,7 +32,7 @@ _linux_get_cpu_freq() {
     local max=0 value f i frac
     for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
         [ -r "$f" ] || continue
-        read -r value < "$f" 2>/dev/null
+        { read -r value < "$f"; } 2>/dev/null
         [[ "$value" =~ ^[0-9]+$ ]] || continue
         (( value > max )) && max=$value
     done
@@ -50,9 +50,9 @@ _linux_get_cpu_freq() {
 # Returns: <total_jiffies> <idle_jiffies>
 # Uses read builtin directly on /proc/stat — zero forks.
 _linux_get_cpu_raw() {
-    local tag u n s i io irq sirq
-    read -r tag u n s i io irq sirq _ < /proc/stat 2>/dev/null
-    [[ "$tag" == "cpu" ]] || return
+    local tag u n s i io irq sirq _
+    { read -r tag u n s i io irq sirq _ < /proc/stat; } 2>/dev/null || return 1
+    [[ "$tag" == "cpu" ]] || return 1
     printf '%d %d' $(( u + n + s + i + io + irq + sirq )) $(( i + io ))
 }
 
@@ -82,14 +82,16 @@ _linux_get_core_idle() {
 _linux_get_memory() {
     local key val unit
     local total=0 available=0 swap_total=0 swap_free=0
-    while read -r key val unit; do
-        case "$key" in
-            MemTotal:)     total=$val ;;
-            MemAvailable:) available=$val ;;
-            SwapTotal:)    swap_total=$val ;;
-            SwapFree:)     swap_free=$val ;;
-        esac
-    done < /proc/meminfo
+    {
+        while read -r key val unit; do
+            case "$key" in
+                MemTotal:)     total=$val ;;
+                MemAvailable:) available=$val ;;
+                SwapTotal:)    swap_total=$val ;;
+                SwapFree:)     swap_free=$val ;;
+            esac
+        done < /proc/meminfo
+    } 2>/dev/null
     printf '%d %d %d %d\n' \
         "$total" \
         "$(( total - available ))" \
@@ -120,8 +122,8 @@ _linux_get_battery() {
                   /sys/class/power_supply/bms; do
         [ -r "$ps_dir/capacity" ] || continue
         local pct status
-        read -r pct    < "$ps_dir/capacity" 2>/dev/null
-        read -r status < "$ps_dir/status"   2>/dev/null
+        { read -r pct    < "$ps_dir/capacity"; } 2>/dev/null
+        { read -r status < "$ps_dir/status"; }   2>/dev/null
         [[ "$pct" =~ ^[0-9]+$ ]] && printf '%s %s' "$pct" "$status" && return
     done
 
@@ -132,24 +134,33 @@ _linux_get_battery() {
 # Uses read builtin directly — zero forks.
 _linux_get_loadavg() {
     local l1 l5 l15 rt rest
-    read -r l1 l5 l15 rt rest < /proc/loadavg 2>/dev/null
-    printf '%s %s %s %s\n' "$l1" "$l5" "$l15" "$rt"
+    if { read -r l1 l5 l15 rt rest < /proc/loadavg; } 2>/dev/null && [ -n "$l1" ]; then
+        printf '%s %s %s %s\n' "$l1" "$l5" "$l15" "$rt"
+        return
+    fi
+    local up_str
+    up_str=$(uptime 2>/dev/null)
+    if [[ "$up_str" =~ load\ average[s]?:\ *([0-9.]+),?\ *([0-9.]+),?\ *([0-9.]+) ]]; then
+        printf '%.2f %.2f %.2f --\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" 2>/dev/null && return
+    fi
+    printf '%s %s %s %s\n' "--" "--" "--" "--"
 }
 
 # Uses read builtin + pure bash math — zero forks.
 _linux_get_uptime() {
     local raw _
-    read -r raw _ < /proc/uptime 2>/dev/null
-    if [[ "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        local s=${raw%%.*}   # integer seconds, no awk needed
-        local d=$(( s / 86400 ))
-        local h=$(( (s % 86400) / 3600 ))
-        local m=$(( (s % 3600) / 60 ))
-        if   (( d > 0 )); then printf '%dd %dh %dm' "$d" "$h" "$m"
-        elif (( h > 0 )); then printf '%dh %dm' "$h" "$m"
-        else                   printf '%dm' "$m"
+    if { read -r raw _ < /proc/uptime; } 2>/dev/null; then
+        if [[ "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            local s=${raw%%.*}   # integer seconds, no awk needed
+            local d=$(( s / 86400 ))
+            local h=$(( (s % 86400) / 3600 ))
+            local m=$(( (s % 3600) / 60 ))
+            if   (( d > 0 )); then printf '%dd %dh %dm' "$d" "$h" "$m"
+            elif (( h > 0 )); then printf '%dh %dm' "$h" "$m"
+            else                   printf '%dm' "$m"
+            fi
+            return
         fi
-        return
     fi
     _fallback_uptime
 }
@@ -170,7 +181,7 @@ _linux_get_llama_proc_stats() {
     local pid=$1
     [ -r "/proc/$pid/stat" ] || return 1
     local lstat rest L_UT L_ST L_RSS
-    read -r lstat < "/proc/$pid/stat" 2>/dev/null
+    { read -r lstat < "/proc/$pid/stat"; } 2>/dev/null || return 1
     rest="${lstat#*) }"
     [[ "$rest" == "$lstat" ]] && return 1
     read -r _ _ _ _ _ _ _ _ _ _ L_UT L_ST _ _ _ _ _ _ _ _ L_RSS <<< "$rest"

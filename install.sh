@@ -45,19 +45,11 @@ LIBDIR="$PREFIX/lib/statd"
 
 # ---- Terminal output helpers ----
 _tty() {
-    if [ -w /dev/tty ] && [ -r /dev/tty ]; then
-        printf '%b' "$*" > /dev/tty 2>/dev/null || printf '%b' "$*"
-    else
-        printf '%b' "$*"
-    fi
+    printf '%b' "$*"
 }
 
 _ttyn() {
-    if [ -w /dev/tty ] && [ -r /dev/tty ]; then
-        printf '%b\n' "$*" > /dev/tty 2>/dev/null || printf '%b\n' "$*"
-    else
-        printf '%b\n' "$*"
-    fi
+    printf '%b\n' "$*"
 }
 
 _header() {
@@ -79,7 +71,7 @@ ask() {
     if [ "$AUTO_YES" = "1" ]; then
         return 0
     fi
-    if [ ! -r /dev/tty ]; then
+    if ! (exec </dev/tty) 2>/dev/null; then
         return 0
     fi
     if [ "$default" = "y" ]; then
@@ -87,7 +79,7 @@ ask() {
     else
         _tty "  \033[1m?\033[0m  %s [y/N] " "$prompt"
     fi
-    read -r response < /dev/tty 2>/dev/null || response="$default"
+    { read -r response < /dev/tty; } 2>/dev/null || response="$default"
     response="${response:-$default}"
     case "$response" in
         [Yy]|[Yy][Ee][Ss]) return 0 ;;
