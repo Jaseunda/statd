@@ -49,40 +49,44 @@ _LIB_DIR=""
 for _d in \
     "$_SCRIPT_DIR/lib" \
     "$_PREFIX_DIR/lib/statd" \
+    "$HOME/.local/lib/statd" \
+    "${PREFIX:-}/lib/statd" \
+    "/data/data/com.termux/files/usr/lib/statd" \
     "/usr/local/lib/statd" \
     "/opt/homebrew/lib/statd" \
     "/usr/lib/statd" \
     "/usr/share/statd/lib"
 do
-    if [ -d "$_d" ]; then
+    if [ -f "$_d/sensors.sh" ] && [ -f "$_d/render.sh" ]; then
         _LIB_DIR="$_d"
         break
     fi
 done
 
 if [ -z "$_LIB_DIR" ]; then
-    printf 'statd: cannot locate lib directory\n' >&2
+    printf 'statd: cannot locate required library files (sensors.sh, render.sh)\n' >&2
+    printf 'If running standalone, use dist/statd or install via:\n' >&2
+    printf '  curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/install.sh | bash\n' >&2
     exit 1
 fi
 
 unset _d _SCRIPT_DIR _PREFIX_DIR
 
 # Source order matters: platform libs first, then the dispatcher layer.
-# shellcheck source=lib/colors.sh
-source "$_LIB_DIR/colors.sh"
-# shellcheck source=lib/render.sh
-source "$_LIB_DIR/render.sh"
-# shellcheck source=lib/sensors_linux.sh
-source "$_LIB_DIR/sensors_linux.sh"
-# shellcheck source=lib/sensors_macos.sh
-source "$_LIB_DIR/sensors_macos.sh"
-# shellcheck source=lib/sensors.sh
-source "$_LIB_DIR/sensors.sh"
-# shellcheck source=lib/llm.sh
-source "$_LIB_DIR/llm.sh"
+for _f in colors.sh render.sh sensors_linux.sh sensors_macos.sh sensors.sh llm.sh; do
+    if [ ! -f "$_LIB_DIR/$_f" ]; then
+        printf 'statd: missing required library: %s/%s\n' "$_LIB_DIR" "$_f" >&2
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    source "$_LIB_DIR/$_f" || {
+        printf 'statd: failed to source %s/%s\n' "$_LIB_DIR" "$_f" >&2
+        exit 1
+    }
+done
 
 STATD_LIB_DIR="$_LIB_DIR"
-unset _LIB_DIR
+unset _LIB_DIR _f
 # END LIB LOADER
 
 # ------------------------------------------------------------
@@ -421,6 +425,21 @@ _statd_core_update() {
     PREFIX="$prefix_dir" bash "$tmp_installer" --prefix="$prefix_dir" --update --yes
     local rc=$?
     rm -f "$tmp_installer"
+
+    # If this script was executed directly from a custom location outside bin (e.g. ~/statd),
+    # update this file directly using dist/statd so it never stays stale
+    local this_script
+    this_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    if [ -w "$this_script" ] && [[ "$this_script" != */bin/* ]]; then
+        local standalone_url="https://raw.githubusercontent.com/Jaseunda/statd/${branch}/dist/statd"
+        printf '  \033[32m+\033[0m  Updating standalone script at %s ...\n' "$this_script"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$standalone_url" -o "$this_script.tmp" 2>/dev/null && mv "$this_script.tmp" "$this_script" && chmod +x "$this_script"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$this_script.tmp" "$standalone_url" 2>/dev/null && mv "$this_script.tmp" "$this_script" && chmod +x "$this_script"
+        fi
+    fi
+
     return $rc
 }
 

@@ -1243,6 +1243,21 @@ _statd_core_update() {
     PREFIX="$prefix_dir" bash "$tmp_installer" --prefix="$prefix_dir" --update --yes
     local rc=$?
     rm -f "$tmp_installer"
+
+    # If this script was executed directly from a custom location outside bin (e.g. ~/statd),
+    # update this file directly using dist/statd so it never stays stale
+    local this_script
+    this_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    if [ -w "$this_script" ] && [[ "$this_script" != */bin/* ]]; then
+        local standalone_url="https://raw.githubusercontent.com/Jaseunda/statd/${branch}/dist/statd"
+        printf '  \033[32m+\033[0m  Updating standalone script at %s ...\n' "$this_script"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$standalone_url" -o "$this_script.tmp" 2>/dev/null && mv "$this_script.tmp" "$this_script" && chmod +x "$this_script"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$this_script.tmp" "$standalone_url" 2>/dev/null && mv "$this_script.tmp" "$this_script" && chmod +x "$this_script"
+        fi
+    fi
+
     return $rc
 }
 

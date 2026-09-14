@@ -288,7 +288,11 @@ fi
 mkdir -p "$BINDIR" "$LIBDIR" \
     || error "Cannot create $BINDIR or $LIBDIR. Try: PREFIX=~/.local bash install.sh"
 
-install -m 755 "$EXTRACT_DIR/statd"                    "$BINDIR/statd"
+if [ -f "$EXTRACT_DIR/dist/statd" ]; then
+    install -m 755 "$EXTRACT_DIR/dist/statd"            "$BINDIR/statd"
+else
+    install -m 755 "$EXTRACT_DIR/statd"                 "$BINDIR/statd"
+fi
 if (( BASH_VERSINFO[0] >= 4 )) && [ -x "$BASH" ] && [ "$BASH" != "/bin/bash" ]; then
     sed -i '' "1s|.*|#!$BASH|" "$BINDIR/statd" 2>/dev/null || sed -i "1s|.*|#!$BASH|" "$BINDIR/statd" 2>/dev/null || true
 fi
