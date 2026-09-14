@@ -59,6 +59,21 @@ INTERVAL="${STATD_API_INTERVAL:-1}"
 DAEMON=0
 ONCE=0
 
+cmd_update() {
+    local statd_cmd=""
+    if [ -x "$(dirname "$0")/../../statd" ]; then
+        statd_cmd="$(dirname "$0")/../../statd"
+    elif command -v statd >/dev/null 2>&1; then
+        statd_cmd="statd"
+    fi
+    if [ -n "$statd_cmd" ]; then
+        exec "$statd_cmd" plugin update api "$@"
+    else
+        printf 'Please use statd to update plugins: statd plugin update api\n' >&2
+        exit 1
+    fi
+}
+
 show_help() {
     cat <<EOF
 statd-api $VERSION — lightweight HTTP JSON & SSE metrics server
@@ -83,6 +98,7 @@ Options:
   -o, --once          Output a single JSON snapshot to stdout and exit
   -v, --version       Show version
   -h, --help          Show this help message
+  update              Update the API plugin to latest version
 
 Endpoints:
   GET /               API overview & endpoints list
@@ -466,6 +482,11 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             show_help
             exit 0
+            ;;
+        update)
+            shift
+            cmd_update "$@"
+            exit $?
             ;;
         *)
             printf 'statd-api: unrecognized argument: %s (see --help)\n' "$1" >&2

@@ -984,13 +984,16 @@ https://github.com/Jaseunda/statd
 
 Usage:
   statd [options]
+  statd about
   statd config [command]
   statd install <plugin>
-  statd plugins
+  statd update [plugin|all]
+  statd plugins [command]
   statd <plugin> [options]
 
 Options:
   -f, --full           Stretch to fill terminal width (auto on mini displays)
+  -a, --about          Show system info, versions, and one-click updater
   -u, --update         Check for and install the latest update
   --check-update       Check if an update is available without installing
   --config [cmd]       Manage view toggles and settings (or: statd config)
@@ -1020,7 +1023,9 @@ Plugin Commands:
   statd install <name>          Install plugin (e.g.: statd install api)
   statd remove <name>           Uninstall plugin
   statd plugins                 List available and installed plugins
+  statd plugins update [name]   Update installed plugin (or all plugins)
   statd api [options]           Start API server (requires api plugin)
+  statd theme [options]         Manage themes (requires theme plugin)
 
 Config Commands:
   statd config                  Show current view settings
@@ -1152,7 +1157,7 @@ statd_check_update() {
     fi
 }
 
-statd_update() {
+_statd_core_update() {
     local script_path
     script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     printf '\033[1mstatd update\033[0m (current version: %s)\n\n' "$VERSION"
@@ -1209,6 +1214,361 @@ statd_update() {
     local rc=$?
     rm -f "$tmp_installer"
     return $rc
+}
+
+get_plugin_version() {
+    local name="$1"
+    local bin
+    bin=$(find_plugin_bin "$name" 2>/dev/null || true)
+    [ -z "$bin" ] && return 1
+    local ver
+    ver=$(sed -n 's/^VERSION=["'\'']\([^"'\'']*\).*/\1/p' "$bin" 2>/dev/null | head -1)
+    if [ -z "$ver" ]; then
+        ver=$("$bin" -v 2>/dev/null | awk '{print $NF}' || true)
+    fi
+    printf '%s' "$ver"
+}
+
+get_remote_plugin_version() {
+    local name="$1"
+    local ver=""
+    local local_file="$(dirname "$STATD_LIB_DIR")/plugins/$name/statd-$name"
+    [ ! -f "$local_file" ] && local_file="$(pwd)/plugins/$name/statd-$name"
+    if [ -f "$local_file" ]; then
+        ver=$(sed -n 's/^VERSION=["'\'']\([^"'\'']*\).*/\1/p' "$local_file" 2>/dev/null | head -1)
+    fi
+    if [ -z "$ver" ] && command -v curl >/dev/null 2>&1; then
+        local url="https://raw.githubusercontent.com/Jaseunda/statd/main/plugins/$name/statd-$name"
+        ver=$(curl -s --connect-timeout 2 --max-time 3 -fsSL "$url" 2>/dev/null | head -n 30 | sed -n 's/^VERSION=["'\'']\([^"'\'']*\).*/\1/p' | head -1)
+    fi
+    printf '%s' "$ver"
+}
+
+get_remote_statd_version() {
+    local ver=""
+    if command -v curl >/dev/null 2>&1; then
+        local url="https://raw.githubusercontent.com/Jaseunda/statd/main/statd"
+        ver=$(curl -s --connect-timeout 2 --max-time 3 -fsSL "$url" 2>/dev/null | head -n 50 | sed -n 's/^VERSION=["'\'']\([^"'\'']*\).*/\1/p' | head -1)
+    fi
+    printf '%s' "$ver"
+}
+
+statd_plugin_update() {
+    local target="all"
+    local force=0
+    local arg
+    for arg in "$@"; do
+        if [ "$arg" = "--force" ] || [ "$arg" = "-f" ]; then
+            force=1
+        elif [ -n "$arg" ] && [ "$target" = "all" ]; then
+            target="$arg"
+        fi
+    done
+
+    local plugins_to_update=()
+    if [ "$target" = "all" ] || [ "$target" = "plugins" ] || [ -z "$target" ]; then
+        local p
+        for p in "theme" "api"; do
+            if find_plugin_bin "$p" >/dev/null 2>&1; then
+                plugins_to_update+=("$p")
+            fi
+        done
+        local d
+        for d in "$STATD_LIB_DIR/plugins/"* "$CONFIG_DIR/plugins/"*; do
+            if [ -d "$d" ]; then
+                local b="$(basename "$d")"
+                if [[ ! " ${plugins_to_update[*]} " =~ " ${b} " ]] && find_plugin_bin "$b" >/dev/null 2>&1; then
+                    plugins_to_update+=("$b")
+                fi
+            fi
+        done
+
+        if [ ${#plugins_to_update[@]} -eq 0 ]; then
+            printf '\n  \033[33m!\033[0m  No plugins are currently installed.\n'
+            printf '     Install plugins with: \033[1mstatd install <name>\033[0m\n'
+            printf '     List available:       \033[1mstatd plugins\033[0m\n\n'
+            return 0
+        fi
+    else
+        if ! find_plugin_bin "$target" >/dev/null 2>&1; then
+            printf '\n  \033[33m!\033[0m  Plugin "%s" is not installed.\n' "$target"
+            printf '     Install it with: \033[1mstatd install %s\033[0m\n\n' "$target"
+            return 1
+        fi
+        plugins_to_update=("$target")
+    fi
+
+    printf '\n  \033[1mUpdating StatD Plugins\033[0m\n'
+    printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+
+    local updated_count=0
+    local p
+    for p in "${plugins_to_update[@]}"; do
+        local cur_ver
+        cur_ver=$(get_plugin_version "$p" || echo "unknown")
+        local remote_ver
+        remote_ver=$(get_remote_plugin_version "$p" || true)
+
+        printf '  \033[1m%-10s\033[0m [installed: v%s]' "$p" "$cur_ver"
+        if [ -n "$remote_ver" ]; then
+            printf ' [latest: v%s]' "$remote_ver"
+        fi
+        printf '\n'
+
+        if [ "$force" != "1" ] && [ -n "$remote_ver" ] && [ "$cur_ver" = "$remote_ver" ]; then
+            printf '  \033[32m●\033[0m  Already up to date (v%s).\n\n' "$cur_ver"
+            continue
+        fi
+
+        local cur_bin
+        cur_bin=$(find_plugin_bin "$p")
+        local target_dir
+        target_dir="$(dirname "$cur_bin")"
+        if [ ! -w "$target_dir" ] 2>/dev/null; then
+            target_dir="$CONFIG_DIR/plugins/$p"
+        fi
+        mkdir -p "$target_dir"
+
+        local success=0
+        local repo_plugin_dir="$(dirname "$STATD_LIB_DIR")/plugins/$p"
+        local cwd_plugin_dir="$(pwd)/plugins/$p"
+        if [ "$target_dir" = "$cwd_plugin_dir" ] || [ "$target_dir" = "$repo_plugin_dir" ]; then
+            chmod +x "$target_dir/statd-$p" 2>/dev/null || true
+            success=1
+        elif [ -d "$cwd_plugin_dir" ] && [ -f "$cwd_plugin_dir/statd-$p" ]; then
+            cp -R "$cwd_plugin_dir/"* "$target_dir/" 2>/dev/null || true
+            chmod +x "$target_dir/statd-$p" 2>/dev/null || true
+            success=1
+        elif [ -d "$repo_plugin_dir" ] && [ -f "$repo_plugin_dir/statd-$p" ]; then
+            cp -R "$repo_plugin_dir/"* "$target_dir/" 2>/dev/null || true
+            chmod +x "$target_dir/statd-$p" 2>/dev/null || true
+            success=1
+        else
+            local base_url="https://raw.githubusercontent.com/Jaseunda/statd/main/plugins/$p"
+            printf '     Downloading update from GitHub...\n'
+            if curl -fsSL "$base_url/statd-$p" -o "$target_dir/statd-$p"; then
+                chmod +x "$target_dir/statd-$p"
+                curl -fsSL "$base_url/README.md" -o "$target_dir/README.md" 2>/dev/null || true
+                success=1
+            fi
+        fi
+
+        if (( success )); then
+            local new_ver
+            new_ver=$(get_plugin_version "$p" || echo "$remote_ver")
+            if [ "$cur_ver" != "$new_ver" ]; then
+                printf '  \033[32m+\033[0m  \033[1;32mUpdated successfully:\033[0m v%s ➔ v%s\n\n' "$cur_ver" "$new_ver"
+            else
+                printf '  \033[32m+\033[0m  \033[32mReinstalled / verified latest:\033[0m v%s\n\n' "$new_ver"
+            fi
+            (( updated_count++ ))
+        else
+            printf '  \033[31mx\033[0m  Failed to update plugin "%s"\n\n' "$p"
+        fi
+    done
+
+    printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+    printf '  Updated %d plugin(s).\n\n' "$updated_count"
+    return 0
+}
+
+statd_update() {
+    local target="${1:-core}"
+    if [ "$target" = "plugins" ] || [ "$target" = "plugin" ]; then
+        shift || true
+        statd_plugin_update "$@"
+        return $?
+    elif [ "$target" = "all" ]; then
+        printf '\n\033[1m=== Updating StatD Core & Plugins ===\033[0m\n\n'
+        _statd_core_update
+        local rc=$?
+        statd_plugin_update "all"
+        return $rc
+    elif [ "$target" = "api" ] || [ "$target" = "theme" ]; then
+        shift || true
+        statd_plugin_update "$target" "$@"
+        return $?
+    fi
+
+    # Core update
+    _statd_core_update "$@"
+}
+
+statd_about() {
+    local opt="${1:-}"
+    if [ "$opt" = "--json" ]; then
+        local statd_path=$(command -v statd 2>/dev/null || echo "$0")
+        local statd_remote=$(get_remote_statd_version)
+        local theme_ver=$(get_plugin_version "theme" 2>/dev/null || echo "")
+        local theme_bin=$(find_plugin_bin "theme" 2>/dev/null || echo "")
+        local theme_remote=$(get_remote_plugin_version "theme" 2>/dev/null || echo "")
+        local api_ver=$(get_plugin_version "api" 2>/dev/null || echo "")
+        local api_bin=$(find_plugin_bin "api" 2>/dev/null || echo "")
+        local api_remote=$(get_remote_plugin_version "api" 2>/dev/null || echo "")
+        cat <<EOF
+{
+  "statd": {
+    "version": "$VERSION",
+    "latest": "${statd_remote:-unknown}",
+    "executable": "$statd_path",
+    "lib_dir": "$STATD_LIB_DIR",
+    "config": "$CONFIG_FILE"
+  },
+  "plugins": {
+    "theme": {
+      "installed": $([ -n "$theme_bin" ] && echo true || echo false),
+      "version": "${theme_ver:-null}",
+      "latest": "${theme_remote:-null}",
+      "path": "${theme_bin:-null}"
+    },
+    "api": {
+      "installed": $([ -n "$api_bin" ] && echo true || echo false),
+      "version": "${api_ver:-null}",
+      "latest": "${api_remote:-null}",
+      "path": "${api_bin:-null}"
+    }
+  }
+}
+EOF
+        return 0
+    fi
+
+    if [ "$opt" = "--update" ] || [ "$opt" = "-u" ]; then
+        statd_update "all"
+        opt=""
+    fi
+
+    local interactive=0
+    if [ -t 0 ] && [ -t 1 ] && [ "$opt" != "--no-interactive" ] && [ "$opt" != "--check" ]; then
+        interactive=1
+    fi
+
+    while :; do
+        local term_w=$(tput cols 2>/dev/null || echo 80)
+        local term_h=$(tput lines 2>/dev/null || echo 24)
+        local active_bin=$(command -v statd 2>/dev/null || echo "$0")
+
+        local os_name="Unknown OS"
+        if [[ "$OSTYPE" == darwin* ]]; then
+            local p_name=$(sw_vers -productName 2>/dev/null || echo "macOS")
+            local p_ver=$(sw_vers -productVersion 2>/dev/null || echo "")
+            os_name="$p_name $p_ver"
+        elif [ -f /etc/os-release ]; then
+            os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-$NAME}")
+        else
+            os_name="$(uname -s)"
+        fi
+        local kernel_info="$(uname -m), $(uname -s) $(uname -r)"
+
+        local remote_statd_ver
+        remote_statd_ver=$(get_remote_statd_version)
+        local statd_status_str=""
+        if [ -n "$remote_statd_ver" ] && [ "$remote_statd_ver" != "$VERSION" ]; then
+            statd_status_str="\033[1;33m▲ update available: v${remote_statd_ver}\033[0m"
+        elif [ -n "$remote_statd_ver" ]; then
+            statd_status_str="\033[32m● up to date\033[0m"
+        else
+            statd_status_str="\033[2m● installed\033[0m"
+        fi
+
+        (( interactive )) && printf '\033[H\033[2J'
+
+        printf '\n'
+        printf '\033[1;36m  ┌─────────────────────────────────────────────────────────────┐\033[0m\n'
+        printf '\033[1;36m  │\033[0m   \033[1;37mStatD\033[0m — Terminal System Stats & Hardware Monitor HUD      \033[1;36m│\033[0m\n'
+        printf '\033[1;36m  │\033[0m   \033[2mhttps://github.com/Jaseunda/statd\033[0m                         \033[1;36m│\033[0m\n'
+        printf '\033[1;36m  └─────────────────────────────────────────────────────────────┘\033[0m\n\n'
+
+        printf '  \033[1;34mCORE & SYSTEM\033[0m\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+        printf '  %-14s \033[1mv%s\033[0m  %b\n' "StatD Core" "$VERSION" "$statd_status_str"
+        printf '  %-14s %s\n' "Executable" "$active_bin"
+        printf '  %-14s %s\n' "Libraries" "$STATD_LIB_DIR"
+        printf '  %-14s %s\n' "Configuration" "$CONFIG_FILE"
+        printf '  %-14s %s (%s)\n' "Platform" "$os_name" "$kernel_info"
+        printf '  %-14s %s (%dx%d) · Bash %s\n' "Terminal" "${TERM:-xterm}" "$term_w" "$term_h" "${BASH_VERSION%%(*}"
+        printf '\n'
+
+        printf '  \033[1;34mPLUGINS\033[0m\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+
+        local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API")
+        local idx=1
+        for item in "${known[@]}"; do
+            IFS='|' read -r p_name p_desc <<< "$item"
+            local p_bin=$(find_plugin_bin "$p_name" 2>/dev/null || true)
+            if [ -n "$p_bin" ]; then
+                local p_ver=$(get_plugin_version "$p_name")
+                local p_remote=$(get_remote_plugin_version "$p_name")
+                local p_status=""
+                if [ -n "$p_remote" ] && [ "$p_remote" != "$p_ver" ]; then
+                    p_status="\033[1;33m▲ update available: v${p_remote}\033[0m"
+                elif [ -n "$p_remote" ]; then
+                    p_status="\033[32m● up to date\033[0m"
+                else
+                    p_status="\033[2m● installed\033[0m"
+                fi
+                printf '  \033[1;36m[%d]\033[0m \033[1;37m%-10s\033[0m \033[1mv%-6s\033[0m %b\n' "$idx" "$p_name" "$p_ver" "$p_status"
+                printf '      \033[2m%s\033[0m\n' "$p_desc"
+                printf '      \033[2mPath: %s\033[0m\n\n' "$p_bin"
+            else
+                printf '  \033[2m[ ] %-10s (not installed) — %s\033[0m\n' "$p_name" "$p_desc"
+                printf '      \033[2mInstall with: statd install %s\033[0m\n\n' "$p_name"
+            fi
+            (( idx++ ))
+        done
+
+        if (( ! interactive )); then
+            return 0
+        fi
+
+        printf '  \033[1;34mONE-CLICK ACTIONS\033[0m\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+        printf '  \033[1;36m[u]\033[0m Update All (StatD + Plugins)   \033[1;36m[s]\033[0m Update StatD Core\n'
+        printf '  \033[1;36m[p]\033[0m Update All Plugins             \033[1;36m[1]\033[0m Update theme\n'
+        printf '  \033[1;36m[2]\033[0m Update api                     \033[1;36m[q]\033[0m Quit\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+        printf '  \033[1;36mSelect action [u/s/p/1/2/q]: \033[0m'
+
+        local action=""
+        IFS= read -rsn1 action 2>/dev/null || true
+        printf '\n\n'
+
+        case "$action" in
+            u|U)
+                statd_update "all"
+                printf '\n  \033[2mPress any key to return to About...\033[0m'
+                read -rsn1 -t 15 _ 2>/dev/null || true
+                ;;
+            s|S)
+                _statd_core_update
+                printf '\n  \033[2mPress any key to return to About...\033[0m'
+                read -rsn1 -t 15 _ 2>/dev/null || true
+                ;;
+            p|P)
+                statd_plugin_update "all"
+                printf '\n  \033[2mPress any key to return to About...\033[0m'
+                read -rsn1 -t 15 _ 2>/dev/null || true
+                ;;
+            1)
+                statd_plugin_update "theme"
+                printf '\n  \033[2mPress any key to return to About...\033[0m'
+                read -rsn1 -t 15 _ 2>/dev/null || true
+                ;;
+            2)
+                statd_plugin_update "api"
+                printf '\n  \033[2mPress any key to return to About...\033[0m'
+                read -rsn1 -t 15 _ 2>/dev/null || true
+                ;;
+            q|Q|$'\e'|""|$'\r'|$'\n')
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    return 0
 }
 
 # ------------------------------------------------------------
@@ -1308,40 +1668,51 @@ statd_plugin_remove() {
 
 statd_plugin_list() {
     printf '\n  \033[1mStatD Plugins\033[0m\n\n'
-    local api_bin theme_bin
-    api_bin=$(find_plugin_bin "api" 2>/dev/null || true)
-    if [ -n "$api_bin" ]; then
-        printf '  \033[32m●\033[0m  \033[1mapi\033[0m         Lightweight HTTP JSON & SSE metrics streaming API  \033[32m[installed]\033[0m\n'
-        printf '              Run: statd api (or statd api --help)\n'
-    else
-        printf '  \033[2m○\033[0m  \033[1mapi\033[0m         Lightweight HTTP JSON & SSE metrics streaming API  \033[2m[available]\033[0m\n'
-        printf '              Install: statd install api\n'
-    fi
-
-    theme_bin=$(find_plugin_bin "theme" 2>/dev/null || true)
-    if [ -n "$theme_bin" ]; then
-        printf '  \033[32m●\033[0m  \033[1mtheme\033[0m       Color themes & custom palette manager              \033[32m[installed]\033[0m\n'
-        printf '              Run: statd theme (or statd theme list)\n'
-    else
-        printf '  \033[2m○\033[0m  \033[1mtheme\033[0m       Color themes & custom palette manager              \033[2m[available]\033[0m\n'
-        printf '              Install: statd install theme\n'
-    fi
-    printf '\n'
+    local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API")
+    local item
+    for item in "${known[@]}"; do
+        IFS='|' read -r p_name p_desc <<< "$item"
+        local p_bin
+        p_bin=$(find_plugin_bin "$p_name" 2>/dev/null || true)
+        if [ -n "$p_bin" ]; then
+            local p_ver
+            p_ver=$(get_plugin_version "$p_name")
+            printf '  \033[32m●\033[0m  \033[1m%-10s\033[0m \033[1mv%-6s\033[0m %s  \033[32m[installed]\033[0m\n' "$p_name" "$p_ver" "$p_desc"
+            printf '              Run: statd %s (or statd %s --help)\n' "$p_name" "$p_name"
+        else
+            printf '  \033[2m○\033[0m  \033[1m%-10s\033[0m         %s  \033[2m[available]\033[0m\n' "$p_name" "$p_desc"
+            printf '              Install: statd install %s\n' "$p_name"
+        fi
+    done
+    printf '\n  Update plugins: statd update plugins  (or: statd plugins update)\n'
+    printf '  System info:    statd about\n\n'
 }
 
 # ------------------------------------------------------------
 # Command line options & Plugin Dispatch
 # ------------------------------------------------------------
-if [ -n "${1:-}" ]; then
-    _plug_bin=$(find_plugin_bin "$1" 2>/dev/null || true)
-    if [ -n "$_plug_bin" ] && [ -x "$_plug_bin" ]; then
-        shift
-        exec "$_plug_bin" "$@"
-    fi
-fi
+case "${1:-}" in
+    install|remove|uninstall|update|-u|--update|--check-update|config|--config|plugins|plugin|about|-a|--about|-v|--version|version|-h|--help|help)
+        # Built-in commands; bypass plugin dispatch
+        ;;
+    *)
+        if [ -n "${1:-}" ]; then
+            _plug_bin=$(find_plugin_bin "$1" 2>/dev/null || true)
+            if [ -n "$_plug_bin" ] && [ -x "$_plug_bin" ]; then
+                shift
+                exec "$_plug_bin" "$@"
+            fi
+        fi
+        ;;
+esac
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        about|-a|--about)
+            shift
+            statd_about "$@"
+            exit $?
+            ;;
         install)
             shift
             statd_plugin_install "$@"
@@ -1360,10 +1731,19 @@ while [[ $# -gt 0 ]]; do
                     statd_plugin_install "$@"
                     exit $?
                     ;;
+                update)
+                    shift
+                    statd_plugin_update "$@"
+                    exit $?
+                    ;;
                 remove|uninstall)
                     shift
                     statd_plugin_remove "$@"
                     exit $?
+                    ;;
+                list)
+                    statd_plugin_list
+                    exit 0
                     ;;
                 *)
                     statd_plugin_list
@@ -1424,7 +1804,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -u|--update|update)
-            statd_update
+            shift
+            statd_update "$@"
             exit $?
             ;;
         --check-update)

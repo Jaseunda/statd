@@ -137,17 +137,47 @@ statd theme set-color gpu amber
 statd theme set-color gpu 0,255,200:0,100,255
 ```
 
-## Update
+## About & System Info (`statd about`)
 
-Update to the latest version at any time:
+Check your StatD core version, installed plugin versions, system environment, and perform one-click updates directly from an interactive TUI card:
 
 ```sh
-statd --update
+# View interactive system info and one-click updater
+statd about
+
+# Non-interactive JSON output for scripts
+statd about --json
 ```
 
-Check for updates without installing:
+While in `statd about`, you can update StatD or plugins with a single keypress:
+- `[u]` — Update All (StatD Core + all installed plugins)
+- `[s]` — Update StatD Core only
+- `[p]` — Update all installed plugins
+- `[1]` / `[2]` — Update specific plugin directly
+- `[q]` — Exit
+
+## Updates & Plugin Maintenance
+
+Keep StatD core and your plugins up to date with a single command:
 
 ```sh
+# Update StatD core
+statd --update
+# or: statd update
+
+# Update all installed plugins
+statd update plugins
+# or: statd plugins update
+
+# Update a specific plugin
+statd update theme
+statd update api
+# or: statd theme update, statd api update
+
+# Update StatD core AND all installed plugins in one go
+statd update all
+
+# Check for updates without installing
 statd --check-update
 ```
 
@@ -163,9 +193,13 @@ curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | ba
 
 | Command / Flag | Description |
 |----------------|-------------|
+| `about`, `-a` | System specs, plugin versions & interactive one-click updater |
+| `update [all\|plugins\|name]` | Update StatD core and/or plugins |
 | `install <name>` | Install a plugin (e.g. `statd install api`) |
 | `plugins` | List available and installed plugins |
+| `plugins update [name]` | Update installed plugin or all plugins |
 | `api [options]` | Start the streaming API server (after `install api`) |
+| `theme [options]` | Manage themes and colors (after `install theme`) |
 | `-f, --full` | Stretch to fill terminal width (auto on mini displays) |
 | `-u, --update` | Update statd to latest version |
 | `--check-update` | Check for updates |

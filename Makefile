@@ -43,3 +43,4 @@ check:
 	@bash -n lib/sensors.sh && echo "OK  lib/sensors.sh"
 	@bash -n lib/llm.sh     && echo "OK  lib/llm.sh"
 	@bash -n plugins/api/statd-api && echo "OK  plugins/api/statd-api"
+	@bash -n plugins/theme/statd-theme && echo "OK  plugins/theme/statd-theme"
