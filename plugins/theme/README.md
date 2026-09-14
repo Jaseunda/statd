@@ -11,11 +11,14 @@ statd install theme
 ## Usage
 
 ```sh
-# View current theme and active metric colors
+# Launch interactive theme picker (use ↑/↓ arrow keys to browse, Enter to apply)
 statd theme
 
 # List all premade themes with live visual previews
 statd theme list
+
+# View active theme status
+statd theme status
 
 # Apply a premade theme
 statd theme set cyberpunk

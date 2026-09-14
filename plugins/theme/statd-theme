@@ -5,7 +5,7 @@
 
 set -e
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 # Locate config and libraries
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/statd"
@@ -18,6 +18,7 @@ _PREFIX_DIR="$(dirname "$_SCRIPT_DIR")"
 LIB_DIR=""
 
 for _d in \
+    "$_SCRIPT_DIR/../../lib" \
     "$(dirname "$_PREFIX_DIR")/lib" \
     "$_PREFIX_DIR/lib/statd" \
     "/usr/local/lib/statd" \
@@ -39,19 +40,97 @@ if [ -n "$LIB_DIR" ]; then
     source "$LIB_DIR/render.sh" 2>/dev/null || true
 fi
 
-# Fallback bar_gradient if render.sh not found
-if ! command -v bar_gradient >/dev/null 2>&1; then
-    bar_gradient() {
-        local pct=$1 width=${2:-20}
-        local filled=$(( pct * width / 100 ))
-        local empty=$(( width - filled ))
-        printf '\033[36m'
-        for (( i=0; i<filled; i++ )); do printf '\xe2\x96\x88'; done
-        printf '\033[90m'
-        for (( i=0; i<empty; i++ )); do printf '░'; done
-        printf '\033[0m'
-    }
-fi
+# Self-contained gradient bar renderer (matches statd lib/render.sh)
+_STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
+_STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}"
+
+bar_grad_level() {
+    printf '%d' $(( (${1:-0} * 5 + 127) / 255 ))
+}
+
+bar_gradient() {
+    local pct=$1 width=${2:-20} mode=${3:-load}
+    [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+    (( pct <   0 )) && pct=0
+    (( pct > 100 )) && pct=100
+    (( width < 1 )) && width=1
+
+    local filled=$(( pct * width / 100 ))
+    local empty=$(( width - filled ))
+    local denom=$(( width > 1 ? width - 1 : 1 ))
+
+    local i t r g b rl gl bl idx tt
+    local custom=0 cr1=0 cg1=0 cb1=0 cr2=0 cg2=0 cb2=0
+    if [[ "$mode" =~ ^([0-9]+),([0-9]+),([0-9]+):([0-9]+),([0-9]+),([0-9]+)$ ]]; then
+        custom=1
+        cr1="${BASH_REMATCH[1]}"; cg1="${BASH_REMATCH[2]}"; cb1="${BASH_REMATCH[3]}"
+        cr2="${BASH_REMATCH[4]}"; cg2="${BASH_REMATCH[5]}"; cb2="${BASH_REMATCH[6]}"
+    fi
+
+    for (( i=0; i<filled; i++ )); do
+        t=$(( i * 1000 / denom ))
+        if (( custom )); then
+            r=$(( cr1 + (cr2 - cr1) * t / 1000 ))
+            g=$(( cg1 + (cg2 - cg1) * t / 1000 ))
+            b=$(( cb1 + (cb2 - cb1) * t / 1000 ))
+        else
+            case "$mode" in
+                cyan)
+                    r=$(( 0   + (30  - 0)   * t / 1000 ))
+                    g=$(( 240 + (110 - 240) * t / 1000 ))
+                    b=$(( 255 + (220 - 255) * t / 1000 ))
+                    ;;
+                mag)
+                    r=$(( 220 + (140 - 220) * t / 1000 ))
+                    g=$(( 130 + (0   - 130) * t / 1000 ))
+                    b=$(( 255 + (180 - 255) * t / 1000 ))
+                    ;;
+                amber)
+                    r=$(( 255 + (220 - 255) * t / 1000 ))
+                    g=$(( 180 + (40  - 180) * t / 1000 ))
+                    b=$(( 20  + (0   - 20)  * t / 1000 ))
+                    ;;
+                purple|pink)
+                    r=$(( 235 + (140 - 235) * t / 1000 ))
+                    g=$(( 80  + (0   - 80)  * t / 1000 ))
+                    b=$(( 255 + (200 - 255) * t / 1000 ))
+                    ;;
+                matrix)
+                    r=$(( 40  + (0   - 40)  * t / 1000 ))
+                    g=$(( 255 + (130 - 255) * t / 1000 ))
+                    b=$(( 60  + (20  - 60)  * t / 1000 ))
+                    ;;
+                nord)
+                    r=$(( 143 + (94  - 143) * t / 1000 ))
+                    g=$(( 188 + (129 - 188) * t / 1000 ))
+                    b=$(( 187 + (172 - 187) * t / 1000 ))
+                    ;;
+                load|*)
+                    if (( t <= 500 )); then
+                        tt=$(( t * 2 ))
+                        r=$(( (225 * tt) / 1000 ))
+                        g=200
+                        b=0
+                    else
+                        tt=$(( (t - 500) * 2 ))
+                        r=225
+                        g=$(( 200 + (40 - 200) * tt / 1000 ))
+                        b=0
+                    fi
+                    ;;
+            esac
+        fi
+        rl=$(bar_grad_level "$r")
+        gl=$(bar_grad_level "$g")
+        bl=$(bar_grad_level "$b")
+        idx=$(( 16 + 36*rl + 6*gl + bl ))
+        printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
+    done
+
+    printf '\033[90m'
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
+    printf '\033[0m'
+}
 
 # Load current configuration
 if [ -f "$CONFIG_FILE" ]; then
@@ -100,13 +179,11 @@ show_help() {
 statd-theme $VERSION — Theme & color palette manager for statd
 
 Usage:
-  statd theme [command] [args]
-
-Commands:
-  statd theme                  Show active theme and color previews
+  statd theme                  Interactive theme picker (arrow keys)
   statd theme list             List all premade themes with visual previews
   statd theme set <theme>      Apply a premade theme (e.g. cyberpunk, nord)
   statd theme preview <theme>  Preview any theme without applying it
+  statd theme status           Show active theme and metric colors
   statd theme set-color <metric> <color>
                                Customize a single metric color
                                Metrics: cpu, gpu, ram, swp, dsk, ld
@@ -116,7 +193,13 @@ Commands:
   statd theme reset            Restore default colors
   statd theme help             Show this help message
 
+Interactive navigation:
+  ↑ / ↓ or j / k               Browse themes with instant live preview
+  Enter                        Select and apply theme
+  q or Esc                     Exit without changes
+
 Examples:
+  statd theme
   statd theme set cyberpunk
   statd theme set nord
   statd theme set-color gpu amber
@@ -154,7 +237,8 @@ cmd_status() {
     render_preview_bar "SWP" 25 "$CURRENT_SWP" 24
     render_preview_bar "DSK" 62 "$CURRENT_DSK" 24
     render_preview_bar "LD"  52 "$CURRENT_LD"  24
-    printf '\n  Switch themes with:   \033[1mstatd theme set <theme>\033[0m\n'
+    printf '\n  Interactive picker:   \033[1mstatd theme\033[0m\n'
+    printf '  Switch themes with:   \033[1mstatd theme set <theme>\033[0m\n'
     printf '  List all themes with: \033[1mstatd theme list\033[0m\n\n'
 }
 
@@ -171,29 +255,54 @@ cmd_list() {
             printf '  %b \033[1m%-12s\033[0m — %s\n' "$marker" "$name" "$desc"
         fi
         printf '    '
-        bar_gradient 60 7 "$c_cpu"
+        bar_gradient 60 6 "$c_cpu"
         printf ' '
-        bar_gradient 75 7 "$c_gpu"
+        bar_gradient 75 6 "$c_gpu"
         printf ' '
-        bar_gradient 50 7 "$c_ram"
+        bar_gradient 50 6 "$c_ram"
         printf ' '
-        bar_gradient 30 7 "$c_swp"
-        printf '\n\n'
+        bar_gradient 30 6 "$c_swp"
+        printf ' '
+        bar_gradient 65 6 "$c_dsk"
+        printf ' '
+        bar_gradient 55 6 "$c_ld"
+        printf '  \033[2m(CPU GPU RAM SWP DSK LD)\033[0m\n\n'
     done
 
     # Check for custom saved themes
-    local custom_count=0
     for f in "$THEMES_DIR"/*.theme; do
         if [ -f "$f" ]; then
-            custom_count=$(( custom_count + 1 ))
             local cname="${f##*/}"
             cname="${cname%.theme}"
-            printf '  \033[35m★\033[0m \033[1m%-12s\033[0m \033[35m[custom]\033[0m\n\n' "$cname"
+            local BAR_MODE_CPU="load" BAR_MODE_GPU="cyan" BAR_MODE_RAM="load"
+            local BAR_MODE_SWP="mag" BAR_MODE_DSK="load" BAR_MODE_LD="load"
+            # shellcheck source=/dev/null
+            source "$f" 2>/dev/null || true
+            local marker="\033[35m★\033[0m"
+            if [ "$cname" = "$CURRENT_THEME" ]; then
+                printf '  %b \033[1;32m%-12s\033[0m \033[32m[active custom]\033[0m\n' "$marker" "$cname"
+            else
+                printf '  %b \033[1m%-12s\033[0m \033[35m[custom]\033[0m\n' "$marker" "$cname"
+            fi
+            printf '    '
+            bar_gradient 60 6 "$BAR_MODE_CPU"
+            printf ' '
+            bar_gradient 75 6 "$BAR_MODE_GPU"
+            printf ' '
+            bar_gradient 50 6 "$BAR_MODE_RAM"
+            printf ' '
+            bar_gradient 30 6 "$BAR_MODE_SWP"
+            printf ' '
+            bar_gradient 65 6 "$BAR_MODE_DSK"
+            printf ' '
+            bar_gradient 55 6 "$BAR_MODE_LD"
+            printf '  \033[2m(CPU GPU RAM SWP DSK LD)\033[0m\n\n'
         fi
     done
 
-    printf '  Apply theme:    \033[1mstatd theme set <name>\033[0m\n'
-    printf '  Preview theme:  \033[1mstatd theme preview <name>\033[0m\n\n'
+    printf '  Interactive picker: \033[1mstatd theme\033[0m\n'
+    printf '  Apply theme:        \033[1mstatd theme set <name>\033[0m\n'
+    printf '  Preview theme:      \033[1mstatd theme preview <name>\033[0m\n\n'
 }
 
 cmd_set() {
@@ -205,7 +314,6 @@ cmd_set() {
     fi
 
     # Check preset themes
-    local found=0
     for entry in "${PRESET_THEMES[@]}"; do
         IFS='|' read -r name c_cpu c_gpu c_ram c_swp c_dsk c_ld desc <<< "$entry"
         if [ "$name" = "$target" ]; then
@@ -218,7 +326,6 @@ cmd_set() {
             _set_config "BAR_MODE_LD" "$c_ld"
             printf '  \033[32m+\033[0m  Applied theme: \033[1;32m%s\033[0m\n' "$name"
             render_full_preview "$name" "$c_cpu" "$c_gpu" "$c_ram" "$c_swp" "$c_dsk" "$c_ld"
-            found=1
             return 0
         fi
     done
@@ -334,11 +441,189 @@ cmd_reset() {
 }
 
 # ------------------------------------------------------------
+# Interactive TUI Theme Selector
+# ------------------------------------------------------------
+interactive_picker() {
+    # If not connected to a terminal, fall back to status
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        cmd_status
+        return 0
+    fi
+
+    local -a items=()
+    local cur_idx=0
+    local idx=0
+
+    # Collect preset themes
+    for entry in "${PRESET_THEMES[@]}"; do
+        IFS='|' read -r name c_cpu c_gpu c_ram c_swp c_dsk c_ld desc <<< "$entry"
+        items+=( "$name|$c_cpu|$c_gpu|$c_ram|$c_swp|$c_dsk|$c_ld|$desc|preset" )
+        if [ "$name" = "$CURRENT_THEME" ]; then
+            cur_idx=$idx
+        fi
+        idx=$(( idx + 1 ))
+    done
+
+    # Collect custom themes
+    for f in "$THEMES_DIR"/*.theme; do
+        if [ -f "$f" ]; then
+            local cname="${f##*/}"
+            cname="${cname%.theme}"
+            local BAR_MODE_CPU="load" BAR_MODE_GPU="cyan" BAR_MODE_RAM="load"
+            local BAR_MODE_SWP="mag" BAR_MODE_DSK="load" BAR_MODE_LD="load"
+            # shellcheck source=/dev/null
+            source "$f" 2>/dev/null || true
+            items+=( "$cname|$BAR_MODE_CPU|$BAR_MODE_GPU|$BAR_MODE_RAM|$BAR_MODE_SWP|$BAR_MODE_DSK|$BAR_MODE_LD|Custom user theme|custom" )
+            if [ "$cname" = "$CURRENT_THEME" ]; then
+                cur_idx=$idx
+            fi
+            idx=$(( idx + 1 ))
+        fi
+    done
+
+    local total=${#items[@]}
+    if (( total == 0 )); then
+        printf 'No themes available.\n'
+        return 1
+    fi
+
+    # Terminal state preservation
+    local old_stty
+    old_stty=$(stty -g 2>/dev/null || true)
+
+    cleanup_picker() {
+        printf '\033[?25h\033[?1049l'
+        if [ -n "$old_stty" ]; then
+            stty "$old_stty" 2>/dev/null || true
+        else
+            stty echo icanon 2>/dev/null || true
+        fi
+    }
+    trap cleanup_picker EXIT INT TERM
+
+    # Switch to alt screen buffer & hide cursor
+    printf '\033[?1049h\033[?25l'
+    stty -echo -icanon min 1 time 0 2>/dev/null || true
+
+    local selected_theme=""
+
+    while true; do
+        # Move cursor home and clear
+        printf '\033[H\033[2J'
+
+        # Banner
+        printf '\033[1;36m  ┌─────────────────────────────────────────────────────────────┐\033[0m\n'
+        printf '\033[1;36m  │\033[0m                 \033[1mStatD Theme Selector\033[0m                        \033[1;36m│\033[0m\n'
+        printf '\033[1;36m  │\033[0m   \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m      \033[1;36m│\033[0m\n'
+        printf '\033[1;36m  └─────────────────────────────────────────────────────────────┘\033[0m\n\n'
+
+        # List themes with cursor indicator
+        local i
+        for (( i=0; i<total; i++ )); do
+            IFS='|' read -r t_name t_cpu t_gpu t_ram t_swp t_dsk t_ld t_desc t_type <<< "${items[i]}"
+            local active_tag=""
+            if [ "$t_name" = "$CURRENT_THEME" ]; then
+                active_tag="\033[32m [active]\033[0m"
+            fi
+
+            if (( i == cur_idx )); then
+                printf '  \033[1;36m▸ \033[1;37m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$t_desc"
+            else
+                printf '    \033[2m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$t_desc"
+            fi
+        done
+
+        # Live Preview Box
+        IFS='|' read -r cur_name cur_cpu cur_gpu cur_ram cur_swp cur_dsk cur_ld cur_desc cur_type <<< "${items[cur_idx]}"
+
+        printf '\n\033[1;34m  ┌─ Live Preview: \033[1;37m%-12s\033[0;1;34m──────────────────────────────────────┐\033[0m\n' "$cur_name"
+
+        printf '\033[1;34m  │\033[0m  CPU  '
+        bar_gradient 52 24 "$cur_cpu"
+        printf '  52%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_cpu"
+
+        printf '\033[1;34m  │\033[0m  GPU  '
+        bar_gradient 74 24 "$cur_gpu"
+        printf '  74%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_gpu"
+
+        printf '\033[1;34m  │\033[0m  RAM  '
+        bar_gradient 61 24 "$cur_ram"
+        printf '  61%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_ram"
+
+        printf '\033[1;34m  │\033[0m  SWP  '
+        bar_gradient 28 24 "$cur_swp"
+        printf '  28%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_swp"
+
+        printf '\033[1;34m  │\033[0m  DSK  '
+        bar_gradient 56 24 "$cur_dsk"
+        printf '  56%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_dsk"
+
+        printf '\033[1;34m  │\033[0m  LD   '
+        bar_gradient 68 24 "$cur_ld"
+        printf '  68%%  \033[2m(%-8s)\033[0m \033[1;34m│\033[0m\n' "$cur_ld"
+        printf '\033[1;34m  └─────────────────────────────────────────────────────────────┘\033[0m\n'
+
+        # Key reading
+        local key="" rest=""
+        IFS= read -rsn1 key || break
+        if [[ "$key" == $'\x1b' ]]; then
+            if read -rsn2 -t 1 rest 2>/dev/null; then
+                case "$rest" in
+                    "[A"|"OA") key="UP" ;;
+                    "[B"|"OB") key="DOWN" ;;
+                    *) key="ESC" ;;
+                esac
+            else
+                key="ESC"
+            fi
+        elif [ -z "$key" ] || [[ "$key" == $'\r' || "$key" == $'\n' || "$key" == " " ]]; then
+            key="ENTER"
+        fi
+
+        case "$key" in
+            UP|k|K|w|W)
+                cur_idx=$(( (cur_idx - 1 + total) % total ))
+                ;;
+            DOWN|j|J|s|S)
+                cur_idx=$(( (cur_idx + 1) % total ))
+                ;;
+            ENTER)
+                selected_theme="$cur_name"
+                break
+                ;;
+            q|Q|ESC)
+                selected_theme=""
+                break
+                ;;
+        esac
+    done
+
+    cleanup_picker
+    trap - EXIT INT TERM
+
+    if [ -n "$selected_theme" ]; then
+        cmd_set "$selected_theme"
+    else
+        printf '  Theme selection cancelled. No changes made.\n\n'
+    fi
+}
+
+# ------------------------------------------------------------
 # Main Dispatch
 # ------------------------------------------------------------
 subcmd="${1:-}"
 case "$subcmd" in
-    ""|status|info)
+    "")
+        if [ -t 0 ] && [ -t 1 ]; then
+            interactive_picker
+        else
+            cmd_status
+        fi
+        ;;
+    interactive|select|tui|ui)
+        interactive_picker
+        ;;
+    status|info)
         cmd_status
         ;;
     list|ls)
