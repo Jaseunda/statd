@@ -60,7 +60,7 @@ _linux_get_cpu_raw() {
 # awk retained here — glob expands to many files, single awk pass is faster
 # than a bash loop calling read on each file individually.
 _linux_get_idle_us() {
-    awk '{s+=$1} END{print s+0}' \
+    awk '{s+=$1} END{printf "%.0f\n", s}' \
         /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
 }
 
@@ -69,11 +69,11 @@ _linux_get_core_idle() {
     awk '
         FNR==1 {
             cpu=FILENAME
-            sub(/.*\/cpu/, "", cpu)
+            sub(/^.*\/cpu\/cpu/, "", cpu)
             sub(/\/cpuidle.*/, "", cpu)
         }
         { idle[cpu] += $1 }
-        END { for (c in idle) printf "%d %d\n", c, idle[c]+0 }
+        END { for (c in idle) printf "%d %.0f\n", c, idle[c] }
     ' /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
 }
 

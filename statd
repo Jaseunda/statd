@@ -1215,11 +1215,11 @@ trigger_dance_party() {
                         local b_cline="${C_GREY}c ${C_RESET}"
                         for (( c=0; c<NCPU; c++ )); do
                             if (( elapsed_s >= 2 && elapsed_s < 5 )); then
-                                b_cline+="\033[1;31m\xe2\x97\x8f"
+                                b_cline+=$'\033[1;31m●'
                             else
                                 local cp=$(( b_pct - (c * 3) ))
                                 (( cp < 10 )) && cp=10
-                                b_cline+="$(pct_color "$cp")\xe2\x97\x8f"
+                                b_cline+="$(pct_color "$cp")●"
                             fi
                         done
                         BENCH_FRAME+=("${b_cline}${C_RESET}")
@@ -1277,10 +1277,28 @@ handle_winch() {
 trap handle_winch WINCH
 
 cleanup() {
-    printf '%s\033[?25h\n' "$C_RESET"
+    local n=${PREV_NLINES:-${#FRAME[@]}}
+    (( n < 1 )) && n=1
+    printf '\033[%d;1H\033[J%s\033[?25h\n' $(( n + 1 )) "$C_RESET"
     exit 0
 }
 trap cleanup INT TERM
+
+# If stdin is not a terminal (e.g. curl ... | bash), reconnect to /dev/tty if available
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+    exec < /dev/tty
+fi
+
+# Ensure UTF-8 locale if default is ASCII/POSIX (prevents broken multibyte characters)
+if [[ "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" =~ ^(C|POSIX)$ ]] || [ -z "${LANG:-}" ]; then
+    for _loc in C.UTF-8 en_US.UTF-8 UTF-8; do
+        if locale -a 2>/dev/null | grep -qi "^${_loc}$"; then
+            export LC_CTYPE="$_loc"
+            break
+        fi
+    done
+    export LC_CTYPE="${LC_CTYPE:-C.UTF-8}"
+fi
 
 PREV_TERM_LINES=0
 PREV_TERM_COLS=0
@@ -1483,7 +1501,7 @@ while true; do
     if [[ "$L1" =~ ^[0-9]+\.[0-9][0-9]$ \
        && "$L5" =~ ^[0-9]+\.[0-9][0-9]$ \
        && "$L15" =~ ^[0-9]+\.[0-9][0-9]$ ]]; then
-        L100=${L1/./}
+        L100=$(( 10#${L1/./} ))
         LD_PCT=$(( L100 / NCPU ))
         (( LD_PCT > 100 )) && LD_PCT=100
         NPROC="${RUNTOT##*/}"
@@ -1664,7 +1682,7 @@ while true; do
 
     if (( SHOW_LD )) && [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
         row_start
-        seg "LD" "$C_BOLD"
+        seg "LD " "$C_BOLD"
         seg " $(printf '%3d' "$LD_PCT")" "$(pct_color "$LD_PCT")"
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
@@ -1723,9 +1741,9 @@ while true; do
                     fi
                     p="${CORE_PCT[$c]:---}"
                     if [[ "$p" =~ ^[0-9]+$ ]]; then
-                        line+="$(pct_color "$p")\xe2\x97\x8f"
+                        line+="$(pct_color "$p")●"
                     else
-                        line+="${C_GREY}\xc2\xb7"
+                        line+="${C_GREY}·"
                     fi
                     (( row_cnt++ ))
                 done
@@ -1748,7 +1766,7 @@ while true; do
                         char="${SPK[$idx]}"
                         line+="$(pct_color "$p")${char}"
                     else
-                        line+="${C_GREY}\xc2\xb7"
+                        line+="${C_GREY}·"
                     fi
                     (( row_cnt++ ))
                 done
@@ -1759,7 +1777,7 @@ while true; do
                 (( WT < NCPU )) && WT=$NCPU
                 BASE=$(( WT / NCPU ))
                 REM=$(( WT % NCPU ))
-                line="${C_GREY}\xe2\x94\x94 ${C_RESET}"
+                line="${C_GREY}└ ${C_RESET}"
                 for (( c=0; c<NCPU; c++ )); do
                     w=$BASE
                     (( c < REM )) && w=$(( w + 1 ))

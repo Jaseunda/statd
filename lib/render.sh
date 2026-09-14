@@ -9,6 +9,13 @@
 
 _STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
 _STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}"
+_STATD_EMPTY_CACHE=("")
+_s_empty=""
+for (( _ie=1; _ie<=256; _ie++ )); do
+    _s_empty+=$'\xe2\x96\x91'
+    _STATD_EMPTY_CACHE[_ie]="$_s_empty"
+done
+unset _ie _s_empty
 
 # Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
 bar_grad_level() {
@@ -161,16 +168,16 @@ bar_gradient() {
                     ;;
             esac
         fi
-        rl=$(bar_grad_level "$r")
-        gl=$(bar_grad_level "$g")
-        bl=$(bar_grad_level "$b")
+        rl=$(( (r * 5 + 127) / 255 ))
+        gl=$(( (g * 5 + 127) / 255 ))
+        bl=$(( (b * 5 + 127) / 255 ))
         idx=$(( 16 + 36*rl + 6*gl + bl ))
         printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
     done
 
-    # Empty portion — substring of pre-built string, no fork
+    # Empty portion — lookup from pre-built array, zero forks, locale-safe
     printf '%s' "$C_GREY"
-    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY_CACHE[$empty]:-${_STATD_EMPTY:0:$empty}}"
     printf '%s' "$C_RESET"
 }
 

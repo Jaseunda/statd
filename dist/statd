@@ -92,6 +92,13 @@ pct_color() {
 
 _STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
 _STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}"
+_STATD_EMPTY_CACHE=("")
+_s_empty=""
+for (( _ie=1; _ie<=256; _ie++ )); do
+    _s_empty+=$'\xe2\x96\x91'
+    _STATD_EMPTY_CACHE[_ie]="$_s_empty"
+done
+unset _ie _s_empty
 
 # Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
 bar_grad_level() {
@@ -244,16 +251,16 @@ bar_gradient() {
                     ;;
             esac
         fi
-        rl=$(bar_grad_level "$r")
-        gl=$(bar_grad_level "$g")
-        bl=$(bar_grad_level "$b")
+        rl=$(( (r * 5 + 127) / 255 ))
+        gl=$(( (g * 5 + 127) / 255 ))
+        bl=$(( (b * 5 + 127) / 255 ))
         idx=$(( 16 + 36*rl + 6*gl + bl ))
         printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
     done
 
-    # Empty portion — substring of pre-built string, no fork
+    # Empty portion — lookup from pre-built array, zero forks, locale-safe
     printf '%s' "$C_GREY"
-    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY_CACHE[$empty]:-${_STATD_EMPTY:0:$empty}}"
     printf '%s' "$C_RESET"
 }
 
@@ -363,7 +370,7 @@ _linux_get_cpu_raw() {
 # awk retained here — glob expands to many files, single awk pass is faster
 # than a bash loop calling read on each file individually.
 _linux_get_idle_us() {
-    awk '{s+=$1} END{print s+0}' \
+    awk '{s+=$1} END{printf "%.0f\n", s}' \
         /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
 }
 
@@ -372,11 +379,11 @@ _linux_get_core_idle() {
     awk '
         FNR==1 {
             cpu=FILENAME
-            sub(/.*\/cpu/, "", cpu)
+            sub(/^.*\/cpu\/cpu/, "", cpu)
             sub(/\/cpuidle.*/, "", cpu)
         }
         { idle[cpu] += $1 }
-        END { for (c in idle) printf "%d %d\n", c, idle[c]+0 }
+        END { for (c in idle) printf "%d %.0f\n", c, idle[c] }
     ' /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
 }
 
@@ -2053,11 +2060,11 @@ trigger_dance_party() {
                         local b_cline="${C_GREY}c ${C_RESET}"
                         for (( c=0; c<NCPU; c++ )); do
                             if (( elapsed_s >= 2 && elapsed_s < 5 )); then
-                                b_cline+="\033[1;31m\xe2\x97\x8f"
+                                b_cline+=$'\033[1;31m●'
                             else
                                 local cp=$(( b_pct - (c * 3) ))
                                 (( cp < 10 )) && cp=10
-                                b_cline+="$(pct_color "$cp")\xe2\x97\x8f"
+                                b_cline+="$(pct_color "$cp")●"
                             fi
                         done
                         BENCH_FRAME+=("${b_cline}${C_RESET}")
@@ -2115,10 +2122,28 @@ handle_winch() {
 trap handle_winch WINCH
 
 cleanup() {
-    printf '%s\033[?25h\n' "$C_RESET"
+    local n=${PREV_NLINES:-${#FRAME[@]}}
+    (( n < 1 )) && n=1
+    printf '\033[%d;1H\033[J%s\033[?25h\n' $(( n + 1 )) "$C_RESET"
     exit 0
 }
 trap cleanup INT TERM
+
+# If stdin is not a terminal (e.g. curl ... | bash), reconnect to /dev/tty if available
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+    exec < /dev/tty
+fi
+
+# Ensure UTF-8 locale if default is ASCII/POSIX (prevents broken multibyte characters)
+if [[ "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" =~ ^(C|POSIX)$ ]] || [ -z "${LANG:-}" ]; then
+    for _loc in C.UTF-8 en_US.UTF-8 UTF-8; do
+        if locale -a 2>/dev/null | grep -qi "^${_loc}$"; then
+            export LC_CTYPE="$_loc"
+            break
+        fi
+    done
+    export LC_CTYPE="${LC_CTYPE:-C.UTF-8}"
+fi
 
 PREV_TERM_LINES=0
 PREV_TERM_COLS=0
@@ -2321,7 +2346,7 @@ while true; do
     if [[ "$L1" =~ ^[0-9]+\.[0-9][0-9]$ \
        && "$L5" =~ ^[0-9]+\.[0-9][0-9]$ \
        && "$L15" =~ ^[0-9]+\.[0-9][0-9]$ ]]; then
-        L100=${L1/./}
+        L100=$(( 10#${L1/./} ))
         LD_PCT=$(( L100 / NCPU ))
         (( LD_PCT > 100 )) && LD_PCT=100
         NPROC="${RUNTOT##*/}"
@@ -2502,7 +2527,7 @@ while true; do
 
     if (( SHOW_LD )) && [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
         row_start
-        seg "LD" "$C_BOLD"
+        seg "LD " "$C_BOLD"
         seg " $(printf '%3d' "$LD_PCT")" "$(pct_color "$LD_PCT")"
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
@@ -2561,9 +2586,9 @@ while true; do
                     fi
                     p="${CORE_PCT[$c]:---}"
                     if [[ "$p" =~ ^[0-9]+$ ]]; then
-                        line+="$(pct_color "$p")\xe2\x97\x8f"
+                        line+="$(pct_color "$p")●"
                     else
-                        line+="${C_GREY}\xc2\xb7"
+                        line+="${C_GREY}·"
                     fi
                     (( row_cnt++ ))
                 done
@@ -2586,7 +2611,7 @@ while true; do
                         char="${SPK[$idx]}"
                         line+="$(pct_color "$p")${char}"
                     else
-                        line+="${C_GREY}\xc2\xb7"
+                        line+="${C_GREY}·"
                     fi
                     (( row_cnt++ ))
                 done
@@ -2597,7 +2622,7 @@ while true; do
                 (( WT < NCPU )) && WT=$NCPU
                 BASE=$(( WT / NCPU ))
                 REM=$(( WT % NCPU ))
-                line="${C_GREY}\xe2\x94\x94 ${C_RESET}"
+                line="${C_GREY}└ ${C_RESET}"
                 for (( c=0; c<NCPU; c++ )); do
                     w=$BASE
                     (( c < REM )) && w=$(( w + 1 ))

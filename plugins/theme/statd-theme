@@ -43,6 +43,13 @@ fi
 # Self-contained gradient bar renderer (matches statd lib/render.sh)
 _STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
 _STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}"
+_STATD_EMPTY_CACHE=("")
+_s_empty=""
+for (( _ie=1; _ie<=128; _ie++ )); do
+    _s_empty+=$'\xe2\x96\x91'
+    _STATD_EMPTY_CACHE[_ie]="$_s_empty"
+done
+unset _ie _s_empty
 
 bar_grad_level() {
     printf '%d' $(( (${1:-0} * 5 + 127) / 255 ))
@@ -190,15 +197,15 @@ bar_gradient() {
                     ;;
             esac
         fi
-        rl=$(bar_grad_level "$r")
-        gl=$(bar_grad_level "$g")
-        bl=$(bar_grad_level "$b")
+        rl=$(( (r * 5 + 127) / 255 ))
+        gl=$(( (g * 5 + 127) / 255 ))
+        bl=$(( (b * 5 + 127) / 255 ))
         idx=$(( 16 + 36*rl + 6*gl + bl ))
         printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
     done
 
     printf '\033[90m'
-    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY_CACHE[$empty]:-${_STATD_EMPTY:0:$empty}}"
     printf '\033[0m'
 }
 
