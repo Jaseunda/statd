@@ -4,20 +4,9 @@ A minimal, flicker-free system stats HUD for your terminal.
 
 No heavy frameworks. No compiling. Just launch and go.
 
-```text
-11:05:45             up 21h 46m
-CPU  15%                 --  --
-████░░░░░░░░░░░░░░░░░░░░░░░░░░░
-RAM  57%          18.36G/32.00G
-█████████████████░░░░░░░░░░░░░░
-SWP  94%          14.12G/15.00G
-█████████████████████████████░░
-DSK  67%        311.35G/460.43G
-████████████████████░░░░░░░░░░░
-LD   54%  5.41 4.61 3.95  1155p
-████████████████░░░░░░░░░░░░░░░
-BAT  80%  AC (not charging)
-```
+<p align="center">
+  <img src="assets/statd.png" alt="statd" width="100%">
+</p>
 
 ## Install
 
