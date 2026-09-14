@@ -297,6 +297,9 @@ mkdir -p "$BINDIR" "$LIBDIR" \
     || error "Cannot create $BINDIR or $LIBDIR. Try: PREFIX=~/.local bash install.sh"
 
 install -m 755 "$EXTRACT_DIR/statd"                    "$BINDIR/statd"
+if (( BASH_VERSINFO[0] >= 4 )) && [ -x "$BASH" ] && [ "$BASH" != "/bin/bash" ]; then
+    sed -i '' "1s|.*|#!$BASH|" "$BINDIR/statd" 2>/dev/null || sed -i "1s|.*|#!$BASH|" "$BINDIR/statd" 2>/dev/null || true
+fi
 install -m 644 "$EXTRACT_DIR/lib/colors.sh"            "$LIBDIR/"
 install -m 644 "$EXTRACT_DIR/lib/render.sh"            "$LIBDIR/"
 install -m 644 "$EXTRACT_DIR/lib/sensors_linux.sh"     "$LIBDIR/"

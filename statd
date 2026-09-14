@@ -95,6 +95,11 @@ CORE_STYLE="${CORE_STYLE:-spark}"   # spark | dots | seg | mini
 CORES_SHOWN="${CORES_SHOWN:-0}"     # 1 = show per-core panel on startup
 LLM_PORT="${LLM_PORT:-8080}"        # llama-server metrics port
 
+READ_TIMEOUT="0.1"
+if ! read -t 0.1 _test_to </dev/null 2>/dev/null; then
+    READ_TIMEOUT=""
+fi
+
 # ------------------------------------------------------------
 # State variables
 # ------------------------------------------------------------
@@ -664,7 +669,11 @@ while true; do
         (( CUR_T >= T_END )) && break
         key=''
         if [ -t 0 ]; then
-            IFS= read -rsn1 -t 0.1 key 2>/dev/null || true
+            if [ -n "$READ_TIMEOUT" ]; then
+                IFS= read -rsn1 -t "$READ_TIMEOUT" key 2>/dev/null || true
+            else
+                IFS= read -rsn1 -t 1 key 2>/dev/null || true
+            fi
         else
             sleep 0.1
         fi
