@@ -105,6 +105,56 @@ bar_gradient() {
                     g=$(( 188 + (129 - 188) * t / 1000 ))
                     b=$(( 187 + (172 - 187) * t / 1000 ))
                     ;;
+                tokyo)
+                    r=$(( 122 + (65  - 122) * t / 1000 ))
+                    g=$(( 162 + (80  - 162) * t / 1000 ))
+                    b=$(( 247 + (160 - 247) * t / 1000 ))
+                    ;;
+                gruvbox)
+                    r=$(( 214 + (157 - 214) * t / 1000 ))
+                    g=$(( 93  + (30  - 93)  * t / 1000 ))
+                    b=$(( 14  + (5   - 14)  * t / 1000 ))
+                    ;;
+                forest)
+                    r=$(( 142 + (60  - 142) * t / 1000 ))
+                    g=$(( 192 + (110 - 192) * t / 1000 ))
+                    b=$(( 124 + (45  - 124) * t / 1000 ))
+                    ;;
+                rose)
+                    r=$(( 235 + (180 - 235) * t / 1000 ))
+                    g=$(( 110 + (40  - 110) * t / 1000 ))
+                    b=$(( 150 + (90  - 150) * t / 1000 ))
+                    ;;
+                ocean|blue)
+                    r=$(( 0   + (0   - 0)   * t / 1000 ))
+                    g=$(( 180 + (70  - 180) * t / 1000 ))
+                    b=$(( 255 + (160 - 255) * t / 1000 ))
+                    ;;
+                emerald)
+                    r=$(( 0   + (0   - 0)   * t / 1000 ))
+                    g=$(( 230 + (120 - 230) * t / 1000 ))
+                    b=$(( 140 + (60  - 140) * t / 1000 ))
+                    ;;
+                lava|red|crimson)
+                    r=$(( 255 + (180 - 255) * t / 1000 ))
+                    g=$(( 60  + (10  - 60)  * t / 1000 ))
+                    b=$(( 30  + (0   - 30)  * t / 1000 ))
+                    ;;
+                gold|yellow)
+                    r=$(( 255 + (218 - 255) * t / 1000 ))
+                    g=$(( 215 + (140 - 215) * t / 1000 ))
+                    b=0
+                    ;;
+                sakura)
+                    r=$(( 255 + (220 - 255) * t / 1000 ))
+                    g=$(( 180 + (110 - 180) * t / 1000 ))
+                    b=$(( 200 + (140 - 200) * t / 1000 ))
+                    ;;
+                stealth)
+                    r=$(( 225 + (120 - 225) * t / 1000 ))
+                    g=$(( 230 + (125 - 230) * t / 1000 ))
+                    b=$(( 235 + (130 - 235) * t / 1000 ))
+                    ;;
                 load|*)
                     if (( t <= 500 )); then
                         tt=$(( t * 2 ))
@@ -151,12 +201,21 @@ PRESET_THEMES=(
     "default|load|cyan|load|mag|load|load|Standard StatD (Green load, Cyan GPU, Magenta Swap)"
     "cyberpunk|amber|cyan|purple|mag|amber|cyan|High-contrast Night City (Amber, Cyan, Hot Pink)"
     "nord|nord|cyan|nord|mag|nord|cyan|Arctic, Frost blue, and Polar night tones"
-    "dracula|purple|cyan|load|mag|amber|purple|Dark fantasy palette (Purple, Cyan, Emerald)"
+    "dracula|purple|cyan|emerald|mag|amber|purple|Dark fantasy palette (Purple, Cyan, Emerald)"
     "catppuccin|purple|cyan|amber|mag|nord|purple|Soothing pastel palette (Lavender, Teal, Peach)"
+    "tokyonight|tokyo|cyan|purple|mag|ocean|tokyo|Tokyo nightlife neon (Storm Blue, Cyan, Purple)"
+    "gruvbox|gruvbox|amber|forest|mag|gruvbox|gold|Retro warm groove (Terracotta, Forest, Gold)"
+    "rosepine|rose|cyan|purple|rose|gold|rose|Minimalist elegance (Rosé, Pine, Iris, Foam)"
     "matrix|matrix|matrix|matrix|matrix|matrix|matrix|Pure terminal lime, emerald, and dark green"
-    "sunset|amber|purple|amber|mag|amber|purple|Fiery sunset gradient (Crimson, Orange, Violet)"
+    "solarized|cyan|ocean|gold|mag|ocean|cyan|Precision Solarized palette (Cyan, Blue, Amber)"
+    "oceanic|ocean|cyan|nord|ocean|cyan|ocean|Deep ocean abyss (Marine Blue, Aqua, Sapphire)"
+    "sunset|amber|purple|amber|mag|lava|purple|Fiery sunset gradient (Crimson, Orange, Violet)"
+    "crimson|lava|amber|lava|mag|lava|amber|Molten volcano (Blood Red, Ruby, Scarlet)"
+    "emerald|emerald|matrix|emerald|forest|matrix|emerald|Lush jade and forest greenery (Mint, Jade, Moss)"
+    "sakura|sakura|rose|purple|sakura|rose|sakura|Japanese cherry blossom (Petal Pink, Blush, Coral)"
     "monokai|load|cyan|purple|mag|amber|load|Vibrant coding palette (Lime, Cyan, Magenta)"
     "synthwave|purple|cyan|mag|purple|cyan|mag|80s retro neon aesthetic (Hot Pink, Neon Cyan)"
+    "stealth|stealth|nord|stealth|stealth|nord|stealth|Monochrome minimal blackout (Slate, Silver, White)"
 )
 
 # Set variable in config file
@@ -187,7 +246,9 @@ Usage:
   statd theme set-color <metric> <color>
                                Customize a single metric color
                                Metrics: cpu, gpu, ram, swp, dsk, ld
-                               Colors:  cyan, amber, purple, matrix, nord, load, mag
+                               Colors:  cyan, amber, purple, matrix, nord, load, mag,
+                                        tokyo, gruvbox, forest, rose, ocean, emerald,
+                                        lava, gold, sakura, stealth
                                         or custom RGB: R1,G1,B1:R2,G2,B2
   statd theme create <name>    Create a custom theme
   statd theme reset            Restore default colors
@@ -381,7 +442,7 @@ cmd_set_color() {
     if [ -z "$metric" ] || [ -z "$color" ]; then
         printf 'Usage: statd theme set-color <metric> <color_or_gradient>\n' >&2
         printf 'Metrics: cpu, gpu, ram, swp, dsk, ld\n' >&2
-        printf 'Colors:  cyan, amber, purple, matrix, nord, load, mag, or R1,G1,B1:R2,G2,B2\n' >&2
+        printf 'Colors:  cyan, amber, purple, matrix, nord, load, mag, tokyo, gruvbox, forest, rose, ocean, emerald, lava, gold, sakura, stealth, or R1,G1,B1:R2,G2,B2\n' >&2
         return 1
     fi
 
@@ -495,9 +556,24 @@ trigger_dance_party() {
         printf '%b  │\033[0m   \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m      %b│\033[0m\n' "$c_border" "$c_border"
         printf '%b  └─────────────────────────────────────────────────────────────┘\033[0m\n\n' "$c_border"
 
-        # List themes with cursor indicator (same format as current display)
+        # List themes with cursor indicator (windowed for terminal height)
+        local term_lines=$(tput lines 2>/dev/null || echo 24)
+        [[ "$term_lines" =~ ^[0-9]+$ ]] || term_lines=24
+        local max_visible=$(( term_lines - 16 ))
+        (( max_visible < 6 )) && max_visible=6
+        (( max_visible > total )) && max_visible=$total
+
+        local win_start=$(( cur_idx - max_visible / 2 ))
+        (( win_start < 0 )) && win_start=0
+        local win_end=$(( win_start + max_visible ))
+        if (( win_end > total )); then
+            win_end=$total
+            win_start=$(( win_end - max_visible ))
+            (( win_start < 0 )) && win_start=0
+        fi
+
         local i
-        for (( i=0; i<total; i++ )); do
+        for (( i=win_start; i<win_end; i++ )); do
             IFS='|' read -r t_name t_cpu t_gpu t_ram t_swp t_dsk t_ld t_desc t_type <<< "${items[i]}"
             local active_tag=""
             if [ "$t_name" = "$CURRENT_THEME" ]; then
@@ -653,9 +729,24 @@ interactive_picker() {
         printf '\033[1;36m  │\033[0m   \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m      \033[1;36m│\033[0m\n'
         printf '\033[1;36m  └─────────────────────────────────────────────────────────────┘\033[0m\n\n'
 
-        # List themes with cursor indicator
+        # List themes with cursor indicator (windowed for terminal height)
+        local term_lines=$(tput lines 2>/dev/null || echo 24)
+        [[ "$term_lines" =~ ^[0-9]+$ ]] || term_lines=24
+        local max_visible=$(( term_lines - 16 ))
+        (( max_visible < 6 )) && max_visible=6
+        (( max_visible > total )) && max_visible=$total
+
+        local win_start=$(( cur_idx - max_visible / 2 ))
+        (( win_start < 0 )) && win_start=0
+        local win_end=$(( win_start + max_visible ))
+        if (( win_end > total )); then
+            win_end=$total
+            win_start=$(( win_end - max_visible ))
+            (( win_start < 0 )) && win_start=0
+        fi
+
         local i
-        for (( i=0; i<total; i++ )); do
+        for (( i=win_start; i<win_end; i++ )); do
             IFS='|' read -r t_name t_cpu t_gpu t_ram t_swp t_dsk t_ld t_desc t_type <<< "${items[i]}"
             local active_tag=""
             if [ "$t_name" = "$CURRENT_THEME" ]; then
