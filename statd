@@ -238,6 +238,7 @@ Plugin Commands:
   statd plugins update [name]   Update installed plugin (or all plugins)
   statd api [options]           Start API server (requires api plugin)
   statd theme [options]         Manage themes (requires theme plugin)
+  statd mcp [options]           Model Context Protocol server (requires mcp plugin)
 
 Config Commands:
   statd config                  Show current view settings
@@ -632,6 +633,9 @@ statd_about() {
         local api_ver=$(get_plugin_version "api" 2>/dev/null || echo "")
         local api_bin=$(find_plugin_bin "api" 2>/dev/null || echo "")
         local api_remote=$(get_remote_plugin_version "api" 2>/dev/null || echo "")
+        local mcp_ver=$(get_plugin_version "mcp" 2>/dev/null || echo "")
+        local mcp_bin=$(find_plugin_bin "mcp" 2>/dev/null || echo "")
+        local mcp_remote=$(get_remote_plugin_version "mcp" 2>/dev/null || echo "")
         cat <<EOF
 {
   "statd": {
@@ -653,6 +657,12 @@ statd_about() {
       "version": "${api_ver:-null}",
       "latest": "${api_remote:-null}",
       "path": "${api_bin:-null}"
+    },
+    "mcp": {
+      "installed": $([ -n "$mcp_bin" ] && echo true || echo false),
+      "version": "${mcp_ver:-null}",
+      "latest": "${mcp_remote:-null}",
+      "path": "${mcp_bin:-null}"
     }
   }
 }
@@ -720,7 +730,7 @@ EOF
         printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
 
         # Only list plugins that are actually installed
-        local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API")
+        local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants")
         local installed_names=()
         local installed_descs=()
         local installed_vers=()
@@ -760,7 +770,7 @@ EOF
             done
         else
             printf '  \033[2mNo plugins installed.\033[0m\n'
-            printf '  \033[2m(Available: theme, api — install with: statd install <name>)\033[0m\n\n'
+            printf '  \033[2m(Available: theme, api, mcp — install with: statd install <name>)\033[0m\n\n'
         fi
 
         if (( ! interactive )); then
@@ -869,6 +879,7 @@ statd_plugin_install() {
         printf 'Available plugins:\n'
         printf '  api      Lightweight HTTP JSON & SSE metrics streaming API\n'
         printf '  theme    Color themes & custom palette manager\n'
+        printf '  mcp      Model Context Protocol server for AI coding assistants\n'
         return 1
     fi
 
@@ -936,7 +947,7 @@ statd_plugin_remove() {
 
 statd_plugin_list() {
     printf '\n  \033[1mStatD Plugins\033[0m\n\n'
-    local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API")
+    local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants")
     local item
     for item in "${known[@]}"; do
         IFS='|' read -r p_name p_desc <<< "$item"
@@ -1027,6 +1038,11 @@ while [[ $# -gt 0 ]]; do
         theme|themes)
             printf '  \033[33m!\033[0m  Plugin "theme" is not installed.\n'
             printf '     Install it with:  statd install theme\n\n'
+            exit 1
+            ;;
+        mcp)
+            printf '  \033[33m!\033[0m  Plugin "mcp" is not installed.\n'
+            printf '     Install it with:  statd install mcp\n\n'
             exit 1
             ;;
         config)

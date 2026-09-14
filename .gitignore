@@ -2,3 +2,5 @@
 /test/
 /test/*
 /lib/plugins/
+__pycache__/
+*.pyc

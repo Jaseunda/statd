@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""
+statd-mcp — Model Context Protocol (MCP) server for StatD
+Part of StatD: https://github.com/Jaseunda/statd
+
+Provides real-time system metrics and local LLM telemetry to AI coding
+assistants via standard JSON-RPC 2.0 over stdio (Claude Desktop, Cursor,
+Antigravity, Windsurf, Zed).
+"""
+
+import sys
+import os
+import json
+import subprocess
+import urllib.request
+import urllib.error
+import platform
+
+VERSION="0.1.0"
+
+def log_err(msg):
+    sys.stderr.write(f"[statd-mcp] {msg}\n")
+    sys.stderr.flush()
+
+# ------------------------------------------------------------
+# Locate StatD and statd-api executable
+# ------------------------------------------------------------
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def find_api_bin():
+    candidates = [
+        os.path.join(SCRIPT_DIR, "..", "api", "statd-api"),
+        os.path.join(SCRIPT_DIR, "..", "..", "plugins", "api", "statd-api"),
+        os.path.expanduser("~/.local/lib/statd/plugins/api/statd-api"),
+        os.path.expanduser("~/.config/statd/plugins/api/statd-api"),
+        "/usr/local/lib/statd/plugins/api/statd-api"
+    ]
+    for c in candidates:
+        abs_path = os.path.abspath(c)
+        if os.path.isfile(abs_path) and os.access(abs_path, os.X_OK):
+            return abs_path
+    return None
+
+API_BIN = find_api_bin()
+
+# ------------------------------------------------------------
+# System Metrics Gathering
+# ------------------------------------------------------------
+def get_metrics_snapshot():
+    """Fetches system metrics snapshot from statd-api daemon, binary, or fallback."""
+    # 1. Try local statd-api daemon if running (sub-millisecond)
+    for port in (8080, 9000):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/stats", headers={"User-Agent": "statd-mcp"})
+            with urllib.request.urlopen(req, timeout=0.3) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            pass
+
+    # 2. Try running statd-api --once
+    if API_BIN:
+        try:
+            res = subprocess.check_output([API_BIN, "--once"], stderr=subprocess.DEVNULL, timeout=2.0)
+            return json.loads(res.decode("utf-8"))
+        except Exception as e:
+            log_err(f"statd-api --once error: {e}")
+
+    # 3. Fallback to basic Python system inspection
+    return get_fallback_metrics()
+
+def get_fallback_metrics():
+    """Clean fallback metrics if statd-api binary is unavailable."""
+    load1, load5, load15 = "--", "--", "--"
+    try:
+        l1, l5, l15 = os.getloadavg()
+        load1, load5, load15 = f"{l1:.2f}", f"{l5:.2f}", f"{l15:.2f}"
+    except Exception:
+        pass
+
+    cores = os.cpu_count() or 1
+    mem_total, mem_used, mem_pct = 0, 0, 0
+
+    # Read memory
+    if os.path.exists("/proc/meminfo"):
+        try:
+            meminfo = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        meminfo[parts[0].strip()] = int(parts[1].split()[0])
+            total = meminfo.get("MemTotal", 0) * 1024
+            avail = meminfo.get("MemAvailable", meminfo.get("MemFree", 0)) * 1024
+            mem_total = total
+            mem_used = max(0, total - avail)
+            mem_pct = int(mem_used * 100 / total) if total > 0 else 0
+        except Exception:
+            pass
+    elif platform.system() == "Darwin":
+        try:
+            total_b = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip())
+            mem_total = total_b
+            vm = subprocess.check_output(["vm_stat"]).decode("utf-8")
+            free_p = 0
+            for line in vm.splitlines():
+                if "Pages free" in line or "Pages speculative" in line:
+                    free_p += int(line.split()[-1].rstrip("."))
+            free_b = free_p * 4096
+            mem_used = max(0, total_b - free_b)
+            mem_pct = int(mem_used * 100 / total_b) if total_b > 0 else 0
+        except Exception:
+            pass
+
+    # Disk
+    disk_total, disk_used, disk_pct = 0, 0, 0
+    try:
+        st = os.statvfs("/")
+        disk_total = st.f_blocks * st.f_frsize
+        disk_avail = st.f_bavail * st.f_frsize
+        disk_used = disk_total - disk_avail
+        disk_pct = int(disk_used * 100 / disk_total) if disk_total > 0 else 0
+    except Exception:
+        pass
+
+    return {
+        "timestamp": subprocess.check_output(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"]).decode().strip(),
+        "uptime": "--",
+        "cpu": {
+            "percent": 0,
+            "freq": "--",
+            "temp": "--",
+            "cores": cores
+        },
+        "memory": {
+            "total_bytes": mem_total,
+            "used_bytes": mem_used,
+            "percent": mem_pct
+        },
+        "swap": {
+            "total_bytes": 0,
+            "used_bytes": 0,
+            "percent": 0
+        },
+        "disk": {
+            "total_bytes": disk_total,
+            "used_bytes": disk_used,
+            "percent": disk_pct
+        },
+        "load": {
+            "l1": load1,
+            "l5": load5,
+            "l15": load15
+        },
+        "battery": {
+            "present": False
+        }
+    }
+
+# ------------------------------------------------------------
+# Local LLM Metrics Gathering
+# ------------------------------------------------------------
+def get_llm_metrics():
+    """Detects active llama.cpp / Ollama instances and extracts performance."""
+    result = {
+        "active": False,
+        "engine": None,
+        "pid": None,
+        "tokens_per_second": None,
+        "prompt_tokens_per_second": None,
+        "kv_cache_usage_ratio": None,
+        "memory_rss_bytes": None,
+        "details": "No local LLM processes detected."
+    }
+
+    # 1. Check llama-server prometheus metrics endpoint
+    for port in (8080, 8000, 11434):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/metrics", headers={"User-Agent": "statd-mcp"})
+            with urllib.request.urlopen(req, timeout=0.3) as resp:
+                if resp.status == 200:
+                    text = resp.read().decode("utf-8", errors="replace")
+                    result["active"] = True
+                    result["engine"] = "llama-server" if port != 11434 else "ollama"
+                    result["port"] = port
+                    # Parse Prometheus counters
+                    for line in text.splitlines():
+                        if line.startswith("llm_tokens_per_second") or "tokens_second" in line:
+                            val = line.split()[-1]
+                            try: result["tokens_per_second"] = float(val)
+                            except ValueError: pass
+                        elif "kv_cache_usage_ratio" in line or "kv_cache" in line:
+                            val = line.split()[-1]
+                            try: result["kv_cache_usage_ratio"] = float(val)
+                            except ValueError: pass
+                    result["details"] = f"Connected to {result['engine']} on port {port}."
+                    break
+        except Exception:
+            pass
+
+    # 2. Check running processes via ps
+    try:
+        ps_out = subprocess.check_output(
+            ["ps", "-eo", "pid,pcpu,rss,comm"],
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8", errors="replace")
+        for line in ps_out.splitlines():
+            low = line.lower()
+            if any(k in low for k in ("llama-server", "llama-cli", "ollama")):
+                parts = line.strip().split(None, 3)
+                if len(parts) >= 4:
+                    pid = int(parts[0])
+                    cpu = float(parts[1])
+                    rss = int(parts[2]) * 1024  # ps returns kB
+                    comm = parts[3]
+                    result["active"] = True
+                    result["pid"] = pid
+                    result["engine"] = os.path.basename(comm)
+                    result["cpu_percent"] = cpu
+                    result["memory_rss_bytes"] = rss
+                    if result["details"] == "No local LLM processes detected.":
+                        result["details"] = f"Detected running LLM process: {comm} (PID {pid}, {cpu}% CPU)."
+                    break
+    except Exception:
+        pass
+
+    return result
+
+# ------------------------------------------------------------
+# System Specs & Diagnostics
+# ------------------------------------------------------------
+def get_system_specs():
+    """Returns host specifications and hardware information."""
+    cores = os.cpu_count() or 1
+    os_name = platform.system()
+    os_release = platform.release()
+    arch = platform.machine()
+    node = platform.node()
+
+    cpu_model = arch
+    if os_name == "Darwin":
+        try:
+            cpu_model = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"]).decode().strip()
+        except Exception:
+            pass
+    elif os_name == "Linux":
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if "model name" in line:
+                        cpu_model = line.split(":", 1)[1].strip()
+                        break
+        except Exception:
+            pass
+
+    metrics = get_metrics_snapshot()
+    mem_total_gb = round(metrics.get("memory", {}).get("total_bytes", 0) / (1024**3), 2)
+    disk_total_gb = round(metrics.get("disk", {}).get("total_bytes", 0) / (1024**3), 2)
+
+    return {
+        "hostname": node,
+        "os": os_name,
+        "os_release": os_release,
+        "architecture": arch,
+        "cpu_model": cpu_model,
+        "cpu_cores": cores,
+        "total_memory_gb": mem_total_gb,
+        "total_disk_gb": disk_total_gb,
+        "uptime": metrics.get("uptime", "--")
+    }
+
+def diagnose_bottlenecks():
+    """Analyzes system metrics to diagnose bottlenecks and resource saturation."""
+    metrics = get_metrics_snapshot()
+    llm = get_llm_metrics()
+    warnings = []
+    status = "healthy"
+
+    cpu = metrics.get("cpu", {})
+    cpu_pct = cpu.get("percent", 0)
+    cores = cpu.get("cores", os.cpu_count() or 1)
+
+    load = metrics.get("load", {})
+    try:
+        l1 = float(load.get("l1", 0))
+        if l1 > (cores * 1.5):
+            warnings.append(f"High CPU load average: {l1:.2f} across {cores} cores.")
+            status = "degraded"
+    except (ValueError, TypeError):
+        pass
+
+    if cpu_pct > 85:
+        warnings.append(f"Heavy CPU utilization: {cpu_pct}%.")
+        status = "degraded"
+
+    mem = metrics.get("memory", {})
+    mem_pct = mem.get("percent", 0)
+    if mem_pct > 90:
+        warnings.append(f"Severe RAM saturation: {mem_pct}% used. Applications may experience OOM kills.")
+        status = "critical"
+    elif mem_pct > 80:
+        warnings.append(f"Elevated RAM usage: {mem_pct}% used.")
+
+    swp = metrics.get("swap", {})
+    swp_pct = swp.get("percent", 0)
+    if swp_pct > 75 and mem_pct > 75:
+        warnings.append(f"Swap thrashing risk: Swap is {swp_pct}% full while RAM is {mem_pct}% full.")
+        status = "critical"
+
+    disk = metrics.get("disk", {})
+    disk_pct = disk.get("percent", 0)
+    if disk_pct > 92:
+        warnings.append(f"Critical disk space: Root filesystem is {disk_pct}% full.")
+        status = "critical"
+    elif disk_pct > 85:
+        warnings.append(f"Low disk space: Root filesystem is {disk_pct}% full.")
+
+    temp = cpu.get("temp", "--")
+    if temp and temp != "--":
+        try:
+            t_num = float(str(temp).rstrip("C° "))
+            if t_num > 88:
+                warnings.append(f"High thermal reading: {t_num}°C (risk of thermal throttling).")
+                status = "degraded"
+        except ValueError:
+            pass
+
+    recommendations = []
+    if status == "healthy":
+        summary = "System resources are operating within normal parameters."
+    else:
+        summary = f"Detected {len(warnings)} resource pressure point(s)."
+        if mem_pct > 85:
+            recommendations.append("Consider terminating inactive background processes or inspecting memory leaks.")
+        if disk_pct > 85:
+            recommendations.append("Clean package caches, Docker prune, or remove old log files.")
+        if cpu_pct > 85:
+            recommendations.append("Inspect top CPU-consuming processes.")
+
+    return {
+        "health_status": status,
+        "summary": summary,
+        "warnings": warnings,
+        "recommendations": recommendations,
+        "llm_active": llm["active"],
+        "metrics_snapshot": metrics
+    }
+
+# ------------------------------------------------------------
+# Model Context Protocol (MCP) Server
+# ------------------------------------------------------------
+TOOLS = [
+    {
+        "name": "statd_get_metrics",
+        "description": "Get instantaneous real-time system metrics (CPU usage, per-core utilization, RAM/Swap, disk usage, load averages, temperature, and battery).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        }
+    },
+    {
+        "name": "statd_get_llm_metrics",
+        "description": "Get live telemetry on local AI inference models (llama.cpp, llama-server, Ollama), including tokens/sec, KV cache usage, process PID, and memory footprint.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        }
+    },
+    {
+        "name": "statd_get_system_info",
+        "description": "Get host hardware specifications, OS name/version, kernel, CPU architecture, core count, total RAM/disk, and system uptime.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        }
+    },
+    {
+        "name": "statd_diagnose_bottlenecks",
+        "description": "Analyze system telemetry to identify performance bottlenecks (thermal throttling, memory saturation, swap thrashing, runaway CPU, disk exhaustion) with actionable recommendations.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        }
+    }
+]
+
+RESOURCES = [
+    {
+        "uri": "statd://system/metrics",
+        "name": "Live System Metrics",
+        "description": "Real-time snapshot of system hardware metrics (JSON format)",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "statd://system/diagnostics",
+        "name": "System Health & Bottlenecks",
+        "description": "Automated system performance assessment and bottleneck diagnosis",
+        "mimeType": "application/json"
+    }
+]
+
+def handle_tool_call(name, args):
+    if name == "statd_get_metrics":
+        data = get_metrics_snapshot()
+    elif name == "statd_get_llm_metrics":
+        data = get_llm_metrics()
+    elif name == "statd_get_system_info":
+        data = get_system_specs()
+    elif name == "statd_diagnose_bottlenecks":
+        data = diagnose_bottlenecks()
+    else:
+        raise ValueError(f"Unknown tool: {name}")
+
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(data, indent=2)
+            }
+        ],
+        "isError": False
+    }
+
+def handle_request(req):
+    req_id = req.get("id")
+    method = req.get("method")
+    params = req.get("params", {})
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {}
+                },
+                "serverInfo": {
+                    "name": "statd-mcp",
+                    "version": VERSION
+                }
+            }
+        }
+
+    elif method == "notifications/initialized":
+        return None
+
+    elif method == "ping":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {}
+        }
+
+    elif method == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "tools": TOOLS
+            }
+        }
+
+    elif method == "tools/call":
+        tool_name = params.get("name")
+        tool_args = params.get("arguments", {})
+        try:
+            result = handle_tool_call(tool_name, tool_args)
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": result
+            }
+        except Exception as e:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32603,
+                    "message": str(e)
+                }
+            }
+
+    elif method == "resources/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "resources": RESOURCES
+            }
+        }
+
+    elif method == "resources/read":
+        uri = params.get("uri")
+        if uri == "statd://system/metrics":
+            text = json.dumps(get_metrics_snapshot(), indent=2)
+        elif uri == "statd://system/diagnostics":
+            text = json.dumps(diagnose_bottlenecks(), indent=2)
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": f"Resource not found: {uri}"
+                }
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": text
+                    }
+                ]
+            }
+        }
+
+    else:
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32601,
+                "message": f"Method not found: {method}"
+            }
+        }
+
+def show_help():
+    print(f"""statd-mcp {VERSION} — Model Context Protocol (MCP) server for StatD
+Exposes live system metrics and local LLM telemetry to AI coding assistants.
+
+Usage:
+  statd mcp [options]
+  statd-mcp [options]
+
+Options:
+  --stdio             Run MCP server over standard I/O (default)
+  --test              Test tool execution locally and output JSON
+  -v, --version       Show version
+  -h, --help          Show this help message
+
+Tools Exposed to AI:
+  statd_get_metrics         Real-time CPU, RAM, Swap, Disk, Load, Temp, Battery
+  statd_get_llm_metrics     Local LLM (llama.cpp, Ollama) performance & memory
+  statd_get_system_info     Host hardware specs, OS, kernel, cores, architecture
+  statd_diagnose_bottlenecks Automated bottleneck analysis (thermal, RAM, CPU)
+""")
+
+# ------------------------------------------------------------
+# Main CLI & Event Loop
+# ------------------------------------------------------------
+def main():
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args or "help" in args:
+        show_help()
+        sys.exit(0)
+    if "-v" in args or "--version" in args or "version" in args:
+        print(f"statd-mcp v{VERSION}")
+        sys.exit(0)
+    if "--test" in args:
+        print("=== Testing statd_get_metrics ===")
+        print(json.dumps(get_metrics_snapshot(), indent=2))
+        print("\n=== Testing statd_get_llm_metrics ===")
+        print(json.dumps(get_llm_metrics(), indent=2))
+        print("\n=== Testing statd_get_system_info ===")
+        print(json.dumps(get_system_specs(), indent=2))
+        print("\n=== Testing statd_diagnose_bottlenecks ===")
+        print(json.dumps(diagnose_bottlenecks(), indent=2))
+        sys.exit(0)
+
+    log_err(f"Server started (v{VERSION}) listening on stdio...")
+
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError as e:
+                log_err(f"Invalid JSON: {e}")
+                err_resp = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"}
+                }
+                sys.stdout.write(json.dumps(err_resp) + "\n")
+                sys.stdout.flush()
+                continue
+
+            resp = handle_request(req)
+            if resp is not None:
+                sys.stdout.write(json.dumps(resp) + "\n")
+                sys.stdout.flush()
+
+        except (KeyboardInterrupt, BrokenPipeError):
+            break
+        except Exception as e:
+            log_err(f"Unhandled exception: {e}")
+
+    log_err("Server stopped.")
+
+if __name__ == "__main__":
+    main()

@@ -137,6 +137,38 @@ statd theme set-color gpu amber
 statd theme set-color gpu 0,255,200:0,100,255
 ```
 
+### AI Model Context Protocol Plugin (`statd mcp`)
+
+Expose real-time hardware telemetry and local LLM performance (`llama.cpp` / Ollama) directly to AI coding assistants (**Claude Desktop**, **Cursor**, **Antigravity**, **Windsurf**, **Zed**) over standard JSON-RPC `stdio`:
+
+```sh
+# Install the MCP plugin
+statd install mcp
+
+# Test tool execution locally
+statd mcp --test
+```
+
+Configure in Claude Desktop (`claude_desktop_config.json`) or Cursor / Antigravity (`mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "statd": {
+      "command": "statd",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+AI assistants can then automatically query:
+- `statd_get_metrics`: CPU, per-core load, RAM, swap, disk, temperature, and battery.
+- `statd_get_llm_metrics`: Local LLM inference speed (tokens/sec), KV cache ratio, process PID.
+- `statd_get_system_info`: Hardware specs, OS, kernel, cores, architecture, uptime.
+- `statd_diagnose_bottlenecks`: Automated analysis of thermal throttling, memory pressure, or swap thrashing.
+
+
 ## About & System Info (`statd about`)
 
 Check your StatD core version, installed plugin versions, system environment, and perform one-click updates directly from an interactive TUI card:
