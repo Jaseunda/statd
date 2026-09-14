@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# statd-theme — Theme and color palette manager for statd
+# Part of statd plugins: https://github.com/Jaseunda/statd
+# MIT License
+
+set -e
+
+VERSION="0.1.0"
+
+# Locate config and libraries
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/statd"
+CONFIG_FILE="$CONFIG_DIR/config"
+THEMES_DIR="$CONFIG_DIR/themes"
+mkdir -p "$CONFIG_DIR" "$THEMES_DIR"
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_PREFIX_DIR="$(dirname "$_SCRIPT_DIR")"
+LIB_DIR=""
+
+for _d in \
+    "$(dirname "$_PREFIX_DIR")/lib" \
+    "$_PREFIX_DIR/lib/statd" \
+    "/usr/local/lib/statd" \
+    "/opt/homebrew/lib/statd" \
+    "$HOME/.local/lib/statd" \
+    "/usr/lib/statd" \
+    "/usr/share/statd/lib"
+do
+    if [ -d "$_d" ] && [ -f "$_d/render.sh" ]; then
+        LIB_DIR="$_d"
+        break
+    fi
+done
+
+if [ -n "$LIB_DIR" ]; then
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/colors.sh" 2>/dev/null || true
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/render.sh" 2>/dev/null || true
+fi
+
+# Fallback bar_gradient if render.sh not found
+if ! command -v bar_gradient >/dev/null 2>&1; then
+    bar_gradient() {
+        local pct=$1 width=${2:-20}
+        local filled=$(( pct * width / 100 ))
+        local empty=$(( width - filled ))
+        printf '\033[36m'
+        for (( i=0; i<filled; i++ )); do printf '\xe2\x96\x88'; done
+        printf '\033[90m'
+        for (( i=0; i<empty; i++ )); do printf '░'; done
+        printf '\033[0m'
+    }
+fi
+
+# Load current configuration
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+CURRENT_THEME="${THEME:-default}"
+CURRENT_CPU="${BAR_MODE_CPU:-load}"
+CURRENT_GPU="${BAR_MODE_GPU:-cyan}"
+CURRENT_RAM="${BAR_MODE_RAM:-load}"
+CURRENT_SWP="${BAR_MODE_SWP:-mag}"
+CURRENT_DSK="${BAR_MODE_DSK:-load}"
+CURRENT_LD="${BAR_MODE_LD:-load}"
+
+# Premade theme definitions: <name>|<cpu>|<gpu>|<ram>|<swp>|<dsk>|<ld>|<desc>
+PRESET_THEMES=(
+    "default|load|cyan|load|mag|load|load|Standard StatD (Green load, Cyan GPU, Magenta Swap)"
+    "cyberpunk|amber|cyan|purple|mag|amber|cyan|High-contrast Night City (Amber, Cyan, Hot Pink)"
+    "nord|nord|cyan|nord|mag|nord|cyan|Arctic, Frost blue, and Polar night tones"
+    "dracula|purple|cyan|load|mag|amber|purple|Dark fantasy palette (Purple, Cyan, Emerald)"
+    "catppuccin|purple|cyan|amber|mag|nord|purple|Soothing pastel palette (Lavender, Teal, Peach)"
+    "matrix|matrix|matrix|matrix|matrix|matrix|matrix|Pure terminal lime, emerald, and dark green"
+    "sunset|amber|purple|amber|mag|amber|purple|Fiery sunset gradient (Crimson, Orange, Violet)"
+    "monokai|load|cyan|purple|mag|amber|load|Vibrant coding palette (Lime, Cyan, Magenta)"
+    "synthwave|purple|cyan|mag|purple|cyan|mag|80s retro neon aesthetic (Hot Pink, Neon Cyan)"
+)
+
+# Set variable in config file
+_set_config() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" "$CONFIG_FILE" 2>/dev/null; then
+        local tmp
+        tmp=$(mktemp)
+        awk -v k="$key" -v v="$val" '
+            $0 ~ "^"k"=" { print k"=\""v"\""; next }
+            { print }
+        ' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+    else
+        printf '%s="%s"\n' "$key" "$val" >> "$CONFIG_FILE"
+    fi
+}
+
+show_help() {
+    cat <<EOF
+statd-theme $VERSION — Theme & color palette manager for statd
+
+Usage:
+  statd theme [command] [args]
+
+Commands:
+  statd theme                  Show active theme and color previews
+  statd theme list             List all premade themes with visual previews
+  statd theme set <theme>      Apply a premade theme (e.g. cyberpunk, nord)
+  statd theme preview <theme>  Preview any theme without applying it
+  statd theme set-color <metric> <color>
+                               Customize a single metric color
+                               Metrics: cpu, gpu, ram, swp, dsk, ld
+                               Colors:  cyan, amber, purple, matrix, nord, load, mag
+                                        or custom RGB: R1,G1,B1:R2,G2,B2
+  statd theme create <name>    Create a custom theme
+  statd theme reset            Restore default colors
+  statd theme help             Show this help message
+
+Examples:
+  statd theme set cyberpunk
+  statd theme set nord
+  statd theme set-color gpu amber
+  statd theme set-color gpu 0,255,200:0,100,255
+EOF
+}
+
+render_preview_bar() {
+    local label="$1" pct="$2" mode="$3" width="${4:-22}"
+    printf '  %-4s ' "$label"
+    bar_gradient "$pct" "$width" "$mode"
+    printf '  \033[2m(%s)\033[0m\n' "$mode"
+}
+
+render_full_preview() {
+    local theme_name="$1" c_cpu="$2" c_gpu="$3" c_ram="$4" c_swp="$5" c_dsk="$6" c_ld="$7"
+    printf '\n  \033[1;36mTheme Preview:\033[0m \033[1m%s\033[0m\n\n' "$theme_name"
+    render_preview_bar "CPU" 45 "$c_cpu" 24
+    render_preview_bar "GPU" 72 "$c_gpu" 24
+    render_preview_bar "RAM" 60 "$c_ram" 24
+    render_preview_bar "SWP" 30 "$c_swp" 24
+    render_preview_bar "DSK" 55 "$c_dsk" 24
+    render_preview_bar "LD"  68 "$c_ld"  24
+    printf '\n'
+}
+
+cmd_status() {
+    printf '\n  \033[1mStatD Theme Status\033[0m\n'
+    printf '  Active Theme: \033[1;32m%s\033[0m\n' "$CURRENT_THEME"
+    printf '  Config file:  \033[2m%s\033[0m\n\n' "$CONFIG_FILE"
+    printf '  \033[1mActive Metric Colors:\033[0m\n'
+    render_preview_bar "CPU" 50 "$CURRENT_CPU" 24
+    render_preview_bar "GPU" 65 "$CURRENT_GPU" 24
+    render_preview_bar "RAM" 58 "$CURRENT_RAM" 24
+    render_preview_bar "SWP" 25 "$CURRENT_SWP" 24
+    render_preview_bar "DSK" 62 "$CURRENT_DSK" 24
+    render_preview_bar "LD"  52 "$CURRENT_LD"  24
+    printf '\n  Switch themes with:   \033[1mstatd theme set <theme>\033[0m\n'
+    printf '  List all themes with: \033[1mstatd theme list\033[0m\n\n'
+}
+
+cmd_list() {
+    printf '\n  \033[1mAvailable StatD Themes\033[0m\n\n'
+    for entry in "${PRESET_THEMES[@]}"; do
+        IFS='|' read -r name c_cpu c_gpu c_ram c_swp c_dsk c_ld desc <<< "$entry"
+        local marker=" "
+        if [ "$name" = "$CURRENT_THEME" ]; then
+            marker="\033[32m●\033[0m"
+            printf '  %b \033[1;32m%-12s\033[0m \033[32m[active]\033[0m — %s\n' "$marker" "$name" "$desc"
+        else
+            marker="\033[2m○\033[0m"
+            printf '  %b \033[1m%-12s\033[0m — %s\n' "$marker" "$name" "$desc"
+        fi
+        printf '    '
+        bar_gradient 60 7 "$c_cpu"
+        printf ' '
+        bar_gradient 75 7 "$c_gpu"
+        printf ' '
+        bar_gradient 50 7 "$c_ram"
+        printf ' '
+        bar_gradient 30 7 "$c_swp"
+        printf '\n\n'
+    done
+
+    # Check for custom saved themes
+    local custom_count=0
+    for f in "$THEMES_DIR"/*.theme; do
+        if [ -f "$f" ]; then
+            custom_count=$(( custom_count + 1 ))
+            local cname="${f##*/}"
+            cname="${cname%.theme}"
+            printf '  \033[35m★\033[0m \033[1m%-12s\033[0m \033[35m[custom]\033[0m\n\n' "$cname"
+        fi
+    done
+
+    printf '  Apply theme:    \033[1mstatd theme set <name>\033[0m\n'
+    printf '  Preview theme:  \033[1mstatd theme preview <name>\033[0m\n\n'
+}
+
+cmd_set() {
+    local target="$1"
+    if [ -z "$target" ]; then
+        printf 'Usage: statd theme set <theme_name>\n' >&2
+        printf 'Run "statd theme list" to see available themes.\n' >&2
+        return 1
+    fi
+
+    # Check preset themes
+    local found=0
+    for entry in "${PRESET_THEMES[@]}"; do
+        IFS='|' read -r name c_cpu c_gpu c_ram c_swp c_dsk c_ld desc <<< "$entry"
+        if [ "$name" = "$target" ]; then
+            _set_config "THEME" "$name"
+            _set_config "BAR_MODE_CPU" "$c_cpu"
+            _set_config "BAR_MODE_GPU" "$c_gpu"
+            _set_config "BAR_MODE_RAM" "$c_ram"
+            _set_config "BAR_MODE_SWP" "$c_swp"
+            _set_config "BAR_MODE_DSK" "$c_dsk"
+            _set_config "BAR_MODE_LD" "$c_ld"
+            printf '  \033[32m+\033[0m  Applied theme: \033[1;32m%s\033[0m\n' "$name"
+            render_full_preview "$name" "$c_cpu" "$c_gpu" "$c_ram" "$c_swp" "$c_dsk" "$c_ld"
+            found=1
+            return 0
+        fi
+    done
+
+    # Check custom theme file
+    local custom_file="$THEMES_DIR/$target.theme"
+    if [ -f "$custom_file" ]; then
+        # shellcheck source=/dev/null
+        source "$custom_file"
+        _set_config "THEME" "$target"
+        _set_config "BAR_MODE_CPU" "${BAR_MODE_CPU:-load}"
+        _set_config "BAR_MODE_GPU" "${BAR_MODE_GPU:-cyan}"
+        _set_config "BAR_MODE_RAM" "${BAR_MODE_RAM:-load}"
+        _set_config "BAR_MODE_SWP" "${BAR_MODE_SWP:-mag}"
+        _set_config "BAR_MODE_DSK" "${BAR_MODE_DSK:-load}"
+        _set_config "BAR_MODE_LD" "${BAR_MODE_LD:-load}"
+        printf '  \033[32m+\033[0m  Applied custom theme: \033[1;32m%s\033[0m\n' "$target"
+        render_full_preview "$target" "$BAR_MODE_CPU" "$BAR_MODE_GPU" "$BAR_MODE_RAM" "$BAR_MODE_SWP" "$BAR_MODE_DSK" "$BAR_MODE_LD"
+        return 0
+    fi
+
+    printf '  \033[31mx\033[0m  Theme "%s" not found.\n' "$target" >&2
+    printf '     Run "statd theme list" to view available themes.\n' >&2
+    return 1
+}
+
+cmd_preview() {
+    local target="$1"
+    if [ -z "$target" ]; then
+        printf 'Usage: statd theme preview <theme_name>\n' >&2
+        return 1
+    fi
+    for entry in "${PRESET_THEMES[@]}"; do
+        IFS='|' read -r name c_cpu c_gpu c_ram c_swp c_dsk c_ld desc <<< "$entry"
+        if [ "$name" = "$target" ]; then
+            render_full_preview "$name" "$c_cpu" "$c_gpu" "$c_ram" "$c_swp" "$c_dsk" "$c_ld"
+            return 0
+        fi
+    done
+    local custom_file="$THEMES_DIR/$target.theme"
+    if [ -f "$custom_file" ]; then
+        # shellcheck source=/dev/null
+        source "$custom_file"
+        render_full_preview "$target" "${BAR_MODE_CPU:-load}" "${BAR_MODE_GPU:-cyan}" "${BAR_MODE_RAM:-load}" "${BAR_MODE_SWP:-mag}" "${BAR_MODE_DSK:-load}" "${BAR_MODE_LD:-load}"
+        return 0
+    fi
+    printf '  \033[31mx\033[0m  Theme "%s" not found.\n' "$target" >&2
+    return 1
+}
+
+cmd_set_color() {
+    local metric="$1" color="$2"
+    if [ -z "$metric" ] || [ -z "$color" ]; then
+        printf 'Usage: statd theme set-color <metric> <color_or_gradient>\n' >&2
+        printf 'Metrics: cpu, gpu, ram, swp, dsk, ld\n' >&2
+        printf 'Colors:  cyan, amber, purple, matrix, nord, load, mag, or R1,G1,B1:R2,G2,B2\n' >&2
+        return 1
+    fi
+
+    metric=$(echo "$metric" | tr '[:upper:]' '[:lower:]')
+    local var=""
+    case "$metric" in
+        cpu) var="BAR_MODE_CPU" ;;
+        gpu) var="BAR_MODE_GPU" ;;
+        ram|mem) var="BAR_MODE_RAM" ;;
+        swp|swap) var="BAR_MODE_SWP" ;;
+        dsk|disk) var="BAR_MODE_DSK" ;;
+        ld|load) var="BAR_MODE_LD" ;;
+        *)
+            printf 'Unknown metric: %s (choose: cpu, gpu, ram, swp, dsk, ld)\n' "$metric" >&2
+            return 1
+            ;;
+    esac
+
+    _set_config "$var" "$color"
+    _set_config "THEME" "custom"
+    printf '  \033[32m+\033[0m  Set \033[1m%s\033[0m color to: \033[1;36m%s\033[0m\n\n' "$metric" "$color"
+    render_preview_bar "$metric" 70 "$color" 24
+    printf '\n'
+}
+
+cmd_create() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        printf 'Usage: statd theme create <theme_name>\n' >&2
+        return 1
+    fi
+
+    local target_file="$THEMES_DIR/$name.theme"
+    cat > "$target_file" <<EOF
+# StatD Theme: $name
+BAR_MODE_CPU="${BAR_MODE_CPU:-load}"
+BAR_MODE_GPU="${BAR_MODE_GPU:-cyan}"
+BAR_MODE_RAM="${BAR_MODE_RAM:-load}"
+BAR_MODE_SWP="${BAR_MODE_SWP:-mag}"
+BAR_MODE_DSK="${BAR_MODE_DSK:-load}"
+BAR_MODE_LD="${BAR_MODE_LD:-load}"
+EOF
+    printf '  \033[32m+\033[0m  Created custom theme: \033[1;32m%s\033[0m at %s\n' "$name" "$target_file"
+    printf '     Edit colors in this file or customize with:\n'
+    printf '     statd theme set-color <metric> <color>\n\n'
+}
+
+cmd_reset() {
+    _set_config "THEME" "default"
+    _set_config "BAR_MODE_CPU" "load"
+    _set_config "BAR_MODE_GPU" "cyan"
+    _set_config "BAR_MODE_RAM" "load"
+    _set_config "BAR_MODE_SWP" "mag"
+    _set_config "BAR_MODE_DSK" "load"
+    _set_config "BAR_MODE_LD" "load"
+    printf '  \033[32m+\033[0m  Reset theme to \033[1mdefault\033[0m (Green load, Cyan GPU, Magenta Swap).\n\n'
+}
+
+# ------------------------------------------------------------
+# Main Dispatch
+# ------------------------------------------------------------
+subcmd="${1:-}"
+case "$subcmd" in
+    ""|status|info)
+        cmd_status
+        ;;
+    list|ls)
+        cmd_list
+        ;;
+    set|apply|use)
+        shift
+        cmd_set "${1:-}"
+        ;;
+    preview)
+        shift
+        cmd_preview "${1:-}"
+        ;;
+    set-color|color)
+        shift
+        cmd_set_color "$@"
+        ;;
+    create|new)
+        shift
+        cmd_create "${1:-}"
+        ;;
+    reset|default)
+        cmd_reset
+        ;;
+    -h|--help|help)
+        show_help
+        ;;
+    -v|--version|version)
+        printf 'statd-theme %s\n' "$VERSION"
+        ;;
+    *)
+        # If user directly typed: statd theme cyberpunk
+        if [ $# -eq 1 ]; then
+            cmd_set "$1"
+        else
+            printf 'Unknown command: %s (see "statd theme --help")\n' "$subcmd" >&2
+            exit 1
+        fi
+        ;;
+esac

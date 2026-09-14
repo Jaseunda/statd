@@ -100,7 +100,7 @@ bar_grad_level() {
 
 # bar_gradient <pct> [width] [mode]
 # Prints a filled gradient bar. No external process forks.
-# mode: "load" (green->yellow->red)   "mag" (purple->blue)
+# mode: "load", "cyan", "mag", "amber", "purple", "matrix", "nord", or "R1,G1,B1:R2,G2,B2"
 bar_gradient() {
     local pct=$1 width=${2:-$BAR_WIDTH} mode=${3:-load}
     [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
@@ -113,24 +113,66 @@ bar_gradient() {
     local denom=$(( width > 1 ? width - 1 : 1 ))
 
     local i t r g b rl gl bl idx tt
+    # Pre-parse custom RGB gradient if format R1,G1,B1:R2,G2,B2
+    local custom=0 cr1=0 cg1=0 cb1=0 cr2=0 cg2=0 cb2=0
+    if [[ "$mode" =~ ^([0-9]+),([0-9]+),([0-9]+):([0-9]+),([0-9]+),([0-9]+)$ ]]; then
+        custom=1
+        cr1="${BASH_REMATCH[1]}"; cg1="${BASH_REMATCH[2]}"; cb1="${BASH_REMATCH[3]}"
+        cr2="${BASH_REMATCH[4]}"; cg2="${BASH_REMATCH[5]}"; cb2="${BASH_REMATCH[6]}"
+    fi
+
     for (( i=0; i<filled; i++ )); do
         t=$(( i * 1000 / denom ))
-        if [ "$mode" = "mag" ]; then
-            r=$(( 220 + (140 - 220) * t / 1000 ))
-            g=$(( 130 + (0   - 130) * t / 1000 ))
-            b=$(( 255 + (180 - 255) * t / 1000 ))
+        if (( custom )); then
+            r=$(( cr1 + (cr2 - cr1) * t / 1000 ))
+            g=$(( cg1 + (cg2 - cg1) * t / 1000 ))
+            b=$(( cb1 + (cb2 - cb1) * t / 1000 ))
         else
-            if (( t <= 500 )); then
-                tt=$(( t * 2 ))
-                r=$(( (225 * tt) / 1000 ))
-                g=200
-                b=0
-            else
-                tt=$(( (t - 500) * 2 ))
-                r=225
-                g=$(( 200 + (40 - 200) * tt / 1000 ))
-                b=0
-            fi
+            case "$mode" in
+                cyan)
+                    r=$(( 0   + (30  - 0)   * t / 1000 ))
+                    g=$(( 240 + (110 - 240) * t / 1000 ))
+                    b=$(( 255 + (220 - 255) * t / 1000 ))
+                    ;;
+                mag)
+                    r=$(( 220 + (140 - 220) * t / 1000 ))
+                    g=$(( 130 + (0   - 130) * t / 1000 ))
+                    b=$(( 255 + (180 - 255) * t / 1000 ))
+                    ;;
+                amber)
+                    r=$(( 255 + (220 - 255) * t / 1000 ))
+                    g=$(( 180 + (40  - 180) * t / 1000 ))
+                    b=$(( 20  + (0   - 20)  * t / 1000 ))
+                    ;;
+                purple|pink)
+                    r=$(( 235 + (140 - 235) * t / 1000 ))
+                    g=$(( 80  + (0   - 80)  * t / 1000 ))
+                    b=$(( 255 + (200 - 255) * t / 1000 ))
+                    ;;
+                matrix)
+                    r=$(( 40  + (0   - 40)  * t / 1000 ))
+                    g=$(( 255 + (130 - 255) * t / 1000 ))
+                    b=$(( 60  + (20  - 60)  * t / 1000 ))
+                    ;;
+                nord)
+                    r=$(( 143 + (94  - 143) * t / 1000 ))
+                    g=$(( 188 + (129 - 188) * t / 1000 ))
+                    b=$(( 187 + (172 - 187) * t / 1000 ))
+                    ;;
+                load|*)
+                    if (( t <= 500 )); then
+                        tt=$(( t * 2 ))
+                        r=$(( (225 * tt) / 1000 ))
+                        g=200
+                        b=0
+                    else
+                        tt=$(( (t - 500) * 2 ))
+                        r=225
+                        g=$(( 200 + (40 - 200) * tt / 1000 ))
+                        b=0
+                    fi
+                    ;;
+            esac
         fi
         rl=$(bar_grad_level "$r")
         gl=$(bar_grad_level "$g")
@@ -837,6 +879,14 @@ SHOW_LD="${SHOW_LD:-1}"
 SHOW_BAT="${SHOW_BAT:-1}"
 SHOW_LLM="${SHOW_LLM:-1}"
 
+# Bar color gradient modes (load, cyan, mag, amber, purple, matrix, nord, or custom R1,G1,B1:R2,G2,B2)
+BAR_MODE_CPU="${BAR_MODE_CPU:-load}"
+BAR_MODE_GPU="${BAR_MODE_GPU:-cyan}"
+BAR_MODE_RAM="${BAR_MODE_RAM:-load}"
+BAR_MODE_SWP="${BAR_MODE_SWP:-mag}"
+BAR_MODE_DSK="${BAR_MODE_DSK:-load}"
+BAR_MODE_LD="${BAR_MODE_LD:-load}"
+
 READ_TIMEOUT="0.1"
 if ! read -t 0.1 _test_to </dev/null 2>/dev/null; then
     READ_TIMEOUT=""
@@ -1139,7 +1189,8 @@ statd_plugin_install() {
     if [ -z "$name" ]; then
         printf 'Usage: statd install <plugin>\n'
         printf 'Available plugins:\n'
-        printf '  api    Lightweight HTTP JSON & SSE metrics streaming API\n'
+        printf '  api      Lightweight HTTP JSON & SSE metrics streaming API\n'
+        printf '  theme    Color themes & custom palette manager\n'
         return 1
     fi
 
@@ -1207,14 +1258,23 @@ statd_plugin_remove() {
 
 statd_plugin_list() {
     printf '\n  \033[1mStatD Plugins\033[0m\n\n'
-    local api_bin
+    local api_bin theme_bin
     api_bin=$(find_plugin_bin "api" 2>/dev/null || true)
     if [ -n "$api_bin" ]; then
-        printf '  \033[32m●\033[0m  \033[1mapi\033[0m       Lightweight HTTP JSON & SSE metrics streaming API  \033[32m[installed]\033[0m\n'
-        printf '            Run: statd api (or statd api --help)\n'
+        printf '  \033[32m●\033[0m  \033[1mapi\033[0m         Lightweight HTTP JSON & SSE metrics streaming API  \033[32m[installed]\033[0m\n'
+        printf '              Run: statd api (or statd api --help)\n'
     else
-        printf '  \033[2m○\033[0m  \033[1mapi\033[0m       Lightweight HTTP JSON & SSE metrics streaming API  \033[2m[available]\033[0m\n'
-        printf '            Install: statd install api\n'
+        printf '  \033[2m○\033[0m  \033[1mapi\033[0m         Lightweight HTTP JSON & SSE metrics streaming API  \033[2m[available]\033[0m\n'
+        printf '              Install: statd install api\n'
+    fi
+
+    theme_bin=$(find_plugin_bin "theme" 2>/dev/null || true)
+    if [ -n "$theme_bin" ]; then
+        printf '  \033[32m●\033[0m  \033[1mtheme\033[0m       Color themes & custom palette manager              \033[32m[installed]\033[0m\n'
+        printf '              Run: statd theme (or statd theme list)\n'
+    else
+        printf '  \033[2m○\033[0m  \033[1mtheme\033[0m       Color themes & custom palette manager              \033[2m[available]\033[0m\n'
+        printf '              Install: statd install theme\n'
     fi
     printf '\n'
 }
@@ -1264,6 +1324,11 @@ while [[ $# -gt 0 ]]; do
         api)
             printf '  \033[33m!\033[0m  Plugin "api" is not installed.\n'
             printf '     Install it with:  statd install api\n\n'
+            exit 1
+            ;;
+        theme|themes)
+            printf '  \033[33m!\033[0m  Plugin "theme" is not installed.\n'
+            printf '     Install it with:  statd install theme\n\n'
             exit 1
             ;;
         config)
@@ -1648,7 +1713,7 @@ while true; do
         elif [ "$FREQ" != "--" ] && [ -n "$FREQ" ]; then
             (( ${#FREQ} <= AVAIL_R )) && seg "$FREQ" "$C_BLUE"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("load")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("${BAR_MODE_CPU:-load}")
     fi
 
     if (( SHOW_GPU )) && [ -n "$GPU_PCT" ]; then
@@ -1693,7 +1758,7 @@ while true; do
             (( ${#_short_model} > AVAIL_R )) && _short_model="${_short_model:0:$AVAIL_R}"
             seg "$_short_model" "$C_DIM"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$GPU_PCT"); ROWMODE+=("load")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$GPU_PCT"); ROWMODE+=("${BAR_MODE_GPU:-cyan}")
     fi
 
     if (( SHOW_RAM )); then
@@ -1710,7 +1775,7 @@ while true; do
         elif (( ${#_ram_used} <= AVAIL_R )); then
             seg "$_ram_used" "$C_DIM"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("load")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("${BAR_MODE_RAM:-load}")
     fi
 
     if (( SHOW_SWP )); then
@@ -1727,7 +1792,7 @@ while true; do
         elif (( ${#_swp_used} <= AVAIL_R )); then
             seg "$_swp_used" "$C_MAG"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("mag")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("${BAR_MODE_SWP:-mag}")
     fi
 
     if (( SHOW_DSK )); then
@@ -1744,7 +1809,7 @@ while true; do
         elif (( ${#_dsk_used} <= AVAIL_R )); then
             seg "$_dsk_used" "$C_DIM"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("load")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("${BAR_MODE_DSK:-load}")
     fi
 
     if (( SHOW_LD )) && [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
@@ -1767,7 +1832,7 @@ while true; do
         elif (( ${#_ld_one} <= AVAIL_R )); then
             seg "$_ld_one" "$C_DIM"
         fi
-        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$LD_PCT"); ROWMODE+=("load")
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$LD_PCT"); ROWMODE+=("${BAR_MODE_LD:-load}")
     fi
 
     VALMAX=0

@@ -114,6 +114,29 @@ sse.onmessage = (e) => {
 };
 ```
 
+### Theme & Palette Plugin (`statd theme`)
+
+Customize bar colors or switch between premade color palettes:
+
+```sh
+# Install the theme plugin
+statd install theme
+
+# List available themes with live previews
+statd theme list
+
+# Switch to a premade theme
+statd theme set cyberpunk
+statd theme set nord
+statd theme set dracula
+statd theme set matrix
+statd theme set sunset
+
+# Customize an individual metric color or custom RGB gradient
+statd theme set-color gpu amber
+statd theme set-color gpu 0,255,200:0,100,255
+```
+
 ## Update
 
 Update to the latest version at any time:

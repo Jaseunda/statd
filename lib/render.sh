@@ -17,7 +17,7 @@ bar_grad_level() {
 
 # bar_gradient <pct> [width] [mode]
 # Prints a filled gradient bar. No external process forks.
-# mode: "load" (green->yellow->red)   "mag" (purple->blue)
+# mode: "load", "cyan", "mag", "amber", "purple", "matrix", "nord", or "R1,G1,B1:R2,G2,B2"
 bar_gradient() {
     local pct=$1 width=${2:-$BAR_WIDTH} mode=${3:-load}
     [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
@@ -30,24 +30,66 @@ bar_gradient() {
     local denom=$(( width > 1 ? width - 1 : 1 ))
 
     local i t r g b rl gl bl idx tt
+    # Pre-parse custom RGB gradient if format R1,G1,B1:R2,G2,B2
+    local custom=0 cr1=0 cg1=0 cb1=0 cr2=0 cg2=0 cb2=0
+    if [[ "$mode" =~ ^([0-9]+),([0-9]+),([0-9]+):([0-9]+),([0-9]+),([0-9]+)$ ]]; then
+        custom=1
+        cr1="${BASH_REMATCH[1]}"; cg1="${BASH_REMATCH[2]}"; cb1="${BASH_REMATCH[3]}"
+        cr2="${BASH_REMATCH[4]}"; cg2="${BASH_REMATCH[5]}"; cb2="${BASH_REMATCH[6]}"
+    fi
+
     for (( i=0; i<filled; i++ )); do
         t=$(( i * 1000 / denom ))
-        if [ "$mode" = "mag" ]; then
-            r=$(( 220 + (140 - 220) * t / 1000 ))
-            g=$(( 130 + (0   - 130) * t / 1000 ))
-            b=$(( 255 + (180 - 255) * t / 1000 ))
+        if (( custom )); then
+            r=$(( cr1 + (cr2 - cr1) * t / 1000 ))
+            g=$(( cg1 + (cg2 - cg1) * t / 1000 ))
+            b=$(( cb1 + (cb2 - cb1) * t / 1000 ))
         else
-            if (( t <= 500 )); then
-                tt=$(( t * 2 ))
-                r=$(( (225 * tt) / 1000 ))
-                g=200
-                b=0
-            else
-                tt=$(( (t - 500) * 2 ))
-                r=225
-                g=$(( 200 + (40 - 200) * tt / 1000 ))
-                b=0
-            fi
+            case "$mode" in
+                cyan)
+                    r=$(( 0   + (30  - 0)   * t / 1000 ))
+                    g=$(( 240 + (110 - 240) * t / 1000 ))
+                    b=$(( 255 + (220 - 255) * t / 1000 ))
+                    ;;
+                mag)
+                    r=$(( 220 + (140 - 220) * t / 1000 ))
+                    g=$(( 130 + (0   - 130) * t / 1000 ))
+                    b=$(( 255 + (180 - 255) * t / 1000 ))
+                    ;;
+                amber)
+                    r=$(( 255 + (220 - 255) * t / 1000 ))
+                    g=$(( 180 + (40  - 180) * t / 1000 ))
+                    b=$(( 20  + (0   - 20)  * t / 1000 ))
+                    ;;
+                purple|pink)
+                    r=$(( 235 + (140 - 235) * t / 1000 ))
+                    g=$(( 80  + (0   - 80)  * t / 1000 ))
+                    b=$(( 255 + (200 - 255) * t / 1000 ))
+                    ;;
+                matrix)
+                    r=$(( 40  + (0   - 40)  * t / 1000 ))
+                    g=$(( 255 + (130 - 255) * t / 1000 ))
+                    b=$(( 60  + (20  - 60)  * t / 1000 ))
+                    ;;
+                nord)
+                    r=$(( 143 + (94  - 143) * t / 1000 ))
+                    g=$(( 188 + (129 - 188) * t / 1000 ))
+                    b=$(( 187 + (172 - 187) * t / 1000 ))
+                    ;;
+                load|*)
+                    if (( t <= 500 )); then
+                        tt=$(( t * 2 ))
+                        r=$(( (225 * tt) / 1000 ))
+                        g=200
+                        b=0
+                    else
+                        tt=$(( (t - 500) * 2 ))
+                        r=225
+                        g=$(( 200 + (40 - 200) * tt / 1000 ))
+                        b=0
+                    fi
+                    ;;
+            esac
         fi
         rl=$(bar_grad_level "$r")
         gl=$(bar_grad_level "$g")
