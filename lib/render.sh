@@ -7,9 +7,8 @@
 #   bar_gradient() — pure bash loop, no seq fork
 #   All other functions are fork-free
 
-# Pre-built empty-bar string (enough for any realistic BAR_WIDTH).
-# Substring slice is faster than any loop or seq call.
 _STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
+_STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}"
 
 # Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
 bar_grad_level() {

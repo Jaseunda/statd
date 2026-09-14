@@ -4,6 +4,7 @@
 # MIT License
 
 set -o pipefail
+shopt -s checkwinsize 2>/dev/null || true
 
 # Ensure Bash 4.0 or later (macOS ships Bash 3.2 by default)
 if (( BASH_VERSINFO[0] < 4 )); then
@@ -89,9 +90,8 @@ pct_color() {
 #   bar_gradient() — pure bash loop, no seq fork
 #   All other functions are fork-free
 
-# Pre-built empty-bar string (enough for any realistic BAR_WIDTH).
-# Substring slice is faster than any loop or seq call.
 _STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
+_STATD_EMPTY="${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}${_STATD_EMPTY}"
 
 # Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
 bar_grad_level() {
@@ -1284,15 +1284,29 @@ clear
 while true; do
 
     # ---- Detect terminal geometry ----
-    if [ -t 1 ]; then
-        TERM_LINES=$(tput lines 2>/dev/null || echo "${LINES:-24}")
-        TERM_COLS=$(tput cols 2>/dev/null || echo "${COLUMNS:-80}")
-    else
-        TERM_LINES=24
-        TERM_COLS=80
+    TERM_LINES=0
+    TERM_COLS=0
+    # 1. Query controlling tty via stty (ioctl TIOCGWINSZ — works accurately on macOS & Linux)
+    if read -r _l _c < <({ stty size </dev/tty || stty size; } 2>/dev/null) && \
+       [[ "$_c" =~ ^[0-9]+$ ]] && (( _c > 0 )); then
+        TERM_LINES=$_l
+        TERM_COLS=$_c
     fi
-    [[ "$TERM_LINES" =~ ^[0-9]+$ ]] || TERM_LINES=24
-    [[ "$TERM_COLS" =~ ^[0-9]+$ ]] || TERM_COLS=80
+    # 2. Check bash COLUMNS/LINES (updated via checkwinsize)
+    if (( TERM_COLS == 0 )) && [[ "$COLUMNS" =~ ^[0-9]+$ ]] && (( COLUMNS > 0 )); then
+        TERM_COLS=$COLUMNS
+        [[ "$LINES" =~ ^[0-9]+$ ]] && (( LINES > 0 )) && TERM_LINES=$LINES
+    fi
+    # 3. Fallback to tput if attached to a terminal
+    if (( TERM_COLS == 0 )) && [ -t 1 ]; then
+        _tc=$(tput cols 2>/dev/null || echo "")
+        _tl=$(tput lines 2>/dev/null || echo "")
+        [[ "$_tc" =~ ^[0-9]+$ ]] && (( _tc > 0 )) && TERM_COLS=$_tc
+        [[ "$_tl" =~ ^[0-9]+$ ]] && (( _tl > 0 )) && TERM_LINES=$_tl
+    fi
+    # 4. Defaults
+    [[ "$TERM_LINES" =~ ^[0-9]+$ ]] && (( TERM_LINES > 0 )) || TERM_LINES=24
+    [[ "$TERM_COLS"  =~ ^[0-9]+$ ]] && (( TERM_COLS  > 0 )) || TERM_COLS=80
 
     if (( NEED_FULL_REDRAW || TERM_LINES != PREV_TERM_LINES || TERM_COLS != PREV_TERM_COLS )); then
         printf '\033[2J\033[H'
@@ -1497,6 +1511,17 @@ while true; do
     # ============================================================
     declare -a LEFTP=() LEFTC=() VALP=() VALC=() ROWPCT=() ROWMODE=()
 
+    # Pre-calculate target width and space available for right-side metrics
+    if (( FULL_WIDTH )) || (( TERM_COLS <= 45 )); then
+        TARGET_W=$TERM_COLS
+    else
+        TARGET_W=36
+    fi
+    (( TARGET_W > TERM_COLS )) && TARGET_W=$TERM_COLS
+    (( TARGET_W < 12 )) && TARGET_W=12
+    AVAIL_R=$(( TARGET_W - 10 ))
+    (( AVAIL_R < 0 )) && AVAIL_R=0
+
     if (( SHOW_CPU )); then
         row_start
         seg "CPU" "$C_BOLD"
@@ -1504,9 +1529,21 @@ while true; do
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
         row_start
-        seg "$FREQ" "$C_BLUE"
-        seg "  " ""
-        seg "$TEMP_STR" "$TEMP_COLOR"
+        if [ "$FREQ" != "--" ] && [ -n "$FREQ" ] && [ "$TEMP_STR" != "--" ] && [ -n "$TEMP_STR" ]; then
+            if (( ${#FREQ} + 2 + ${#TEMP_STR} <= AVAIL_R )); then
+                seg "$FREQ" "$C_BLUE"
+                seg "  " ""
+                seg "$TEMP_STR" "$TEMP_COLOR"
+            elif (( ${#TEMP_STR} <= AVAIL_R )); then
+                seg "$TEMP_STR" "$TEMP_COLOR"
+            elif (( ${#FREQ} <= AVAIL_R )); then
+                seg "$FREQ" "$C_BLUE"
+            fi
+        elif [ "$TEMP_STR" != "--" ] && [ -n "$TEMP_STR" ]; then
+            (( ${#TEMP_STR} <= AVAIL_R )) && seg "$TEMP_STR" "$TEMP_COLOR"
+        elif [ "$FREQ" != "--" ] && [ -n "$FREQ" ]; then
+            (( ${#FREQ} <= AVAIL_R )) && seg "$FREQ" "$C_BLUE"
+        fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("load")
     fi
 
@@ -1517,7 +1554,13 @@ while true; do
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
         row_start
-        seg "$(human "$MEM_USED_B")/$(human "$MEM_TOTAL_B")" "$C_DIM"
+        _ram_full="$(human "$MEM_USED_B")/$(human "$MEM_TOTAL_B")"
+        _ram_used="$(human "$MEM_USED_B")"
+        if (( ${#_ram_full} <= AVAIL_R )); then
+            seg "$_ram_full" "$C_DIM"
+        elif (( ${#_ram_used} <= AVAIL_R )); then
+            seg "$_ram_used" "$C_DIM"
+        fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("load")
     fi
 
@@ -1528,7 +1571,13 @@ while true; do
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
         row_start
-        seg "$(human "$SWAP_USED_B")/$(human "$SWAP_TOTAL_B")" "$C_MAG"
+        _swp_full="$(human "$SWAP_USED_B")/$(human "$SWAP_TOTAL_B")"
+        _swp_used="$(human "$SWAP_USED_B")"
+        if (( ${#_swp_full} <= AVAIL_R )); then
+            seg "$_swp_full" "$C_MAG"
+        elif (( ${#_swp_used} <= AVAIL_R )); then
+            seg "$_swp_used" "$C_MAG"
+        fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("mag")
     fi
 
@@ -1539,7 +1588,13 @@ while true; do
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
         row_start
-        seg "$(human "$DISK_USED")/$(human "$DISK_TOTAL")" "$C_DIM"
+        _dsk_full="$(human "$DISK_USED")/$(human "$DISK_TOTAL")"
+        _dsk_used="$(human "$DISK_USED")"
+        if (( ${#_dsk_full} <= AVAIL_R )); then
+            seg "$_dsk_full" "$C_DIM"
+        elif (( ${#_dsk_used} <= AVAIL_R )); then
+            seg "$_dsk_used" "$C_DIM"
+        fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("load")
     fi
 
@@ -1550,10 +1605,18 @@ while true; do
         seg "%  " ""
         LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
         row_start
-        if (( TERM_COLS >= 32 )); then
-            seg "$L1 $L5 $L15  ${NPROC}p" "$C_DIM"
-        else
-            seg "$L1 $L5 $L15" "$C_DIM"
+        _ld_all="$L1 $L5 $L15  ${NPROC}p"
+        _ld_three="$L1 $L5 $L15"
+        _ld_two="$L1 $L5"
+        _ld_one="$L1"
+        if [ -n "$NPROC" ] && (( ${#_ld_all} <= AVAIL_R )); then
+            seg "$_ld_all" "$C_DIM"
+        elif (( ${#_ld_three} <= AVAIL_R )); then
+            seg "$_ld_three" "$C_DIM"
+        elif (( ${#_ld_two} <= AVAIL_R )); then
+            seg "$_ld_two" "$C_DIM"
+        elif (( ${#_ld_one} <= AVAIL_R )); then
+            seg "$_ld_one" "$C_DIM"
         fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$LD_PCT"); ROWMODE+=("load")
     fi
@@ -1564,8 +1627,8 @@ while true; do
     for l in "${LEFTP[@]}"; do (( ${#l} > LEFTW )) && LEFTW=${#l}; done
     MIN_W=$(( LEFTW + VALMAX ))
 
-    # Full width: automatically fill terminal on mini displays (<= 50 cols) or when FULL_WIDTH=1
-    if (( FULL_WIDTH )) || (( TERM_COLS <= 50 )); then
+    # Full width: automatically fill terminal on mini displays (<= 45 cols) or when FULL_WIDTH=1
+    if (( FULL_WIDTH )) || (( TERM_COLS <= 45 )); then
         TOTALW=$TERM_COLS
     else
         TOTALW=$MIN_W
@@ -1576,6 +1639,7 @@ while true; do
     if (( TERM_COLS > 10 )) && (( TOTALW > TERM_COLS )); then
         TOTALW=$TERM_COLS
     fi
+    (( TOTALW < 12 )) && TOTALW=12
 
     # ---- Per-core panel ----
     CORE_ROWS=()
@@ -1659,15 +1723,24 @@ while true; do
     UPTXT="up $UP"
     pad=$(( TOTALW - ${#CLOCK} - ${#UPTXT} ))
     if (( pad < 1 )); then
-        if (( ${#UPTXT} > 6 )) && (( ${#CLOCK} + ${#UPTXT} >= TOTALW )); then
-            UPTXT="${UPTXT// /}"
-            pad=$(( TOTALW - ${#CLOCK} - ${#UPTXT} ))
-        fi
-        (( pad < 1 )) && pad=1
+        UPTXT="${UPTXT// /}"
+        pad=$(( TOTALW - ${#CLOCK} - ${#UPTXT} ))
+    fi
+    if (( pad < 1 )); then
+        UPTXT="$UP"
+        pad=$(( TOTALW - ${#CLOCK} - ${#UPTXT} ))
+    fi
+    if (( pad < 1 )); then
+        UPTXT=""
+        pad=0
     fi
 
     FRAME=()
-    FRAME+=("$(printf '%s%s%*s%s%s' "$C_DIM" "$CLOCK" "$pad" "" "$UPTXT" "$C_RESET")")
+    if [ -n "$UPTXT" ]; then
+        FRAME+=("$(printf '%s%s%*s%s%s' "$C_DIM" "$CLOCK" "$pad" "" "$UPTXT" "$C_RESET")")
+    else
+        FRAME+=("$(printf '%s%s%s' "$C_DIM" "$CLOCK" "$C_RESET")")
+    fi
 
     for i in "${!LEFTP[@]}"; do
         pad=$(( TOTALW - ${#LEFTP[$i]} - ${#VALP[$i]} ))
@@ -1684,18 +1757,33 @@ while true; do
         row_start
         seg "LLM" "$C_BOLD"
         [ -n "$TPS_STR" ]  && seg " ${TPS_STR} t/s" "$C_CYAN"
-        local llm_left="$ROW_COLORED"
-        local llm_left_plain="$ROW_PLAIN"
+        _llm_left="$ROW_COLORED"
+        _llm_left_plain="$ROW_PLAIN"
 
         row_start
-        [ -n "$LCPU_STR" ] && { seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"; seg "  " ""; }
-        [ -n "$RSS_STR" ]  && seg "${RSS_STR}" "$C_DIM"
-        local llm_val="$ROW_COLORED"
-        local llm_val_plain="$ROW_PLAIN"
+        _llm_avail=$(( TOTALW - ${#_llm_left_plain} ))
+        (( _llm_avail < 0 )) && _llm_avail=0
+        if [ -n "$LCPU_STR" ] && [ -n "$RSS_STR" ]; then
+            if (( ${#LCPU_STR} + 3 + ${#RSS_STR} <= _llm_avail )); then
+                seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"
+                seg "  " ""
+                seg "${RSS_STR}" "$C_DIM"
+            elif (( ${#LCPU_STR} + 1 <= _llm_avail )); then
+                seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"
+            elif (( ${#RSS_STR} <= _llm_avail )); then
+                seg "${RSS_STR}" "$C_DIM"
+            fi
+        elif [ -n "$LCPU_STR" ]; then
+            (( ${#LCPU_STR} + 1 <= _llm_avail )) && seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"
+        elif [ -n "$RSS_STR" ]; then
+            (( ${#RSS_STR} <= _llm_avail )) && seg "${RSS_STR}" "$C_DIM"
+        fi
+        _llm_val="$ROW_COLORED"
+        _llm_val_plain="$ROW_PLAIN"
 
-        local llm_pad=$(( TOTALW - ${#llm_left_plain} - ${#llm_val_plain} ))
-        (( llm_pad < 0 )) && llm_pad=0
-        FRAME+=("$(printf '%s%*s%s' "$llm_left" "$llm_pad" "" "$llm_val")")
+        _llm_pad=$(( TOTALW - ${#_llm_left_plain} - ${#_llm_val_plain} ))
+        (( _llm_pad < 0 )) && _llm_pad=0
+        FRAME+=("$(printf '%s%*s%s' "$_llm_left" "$_llm_pad" "" "$_llm_val")")
     fi
 
     # ---- Battery row ----
@@ -1704,17 +1792,28 @@ while true; do
         seg "BAT" "$C_BOLD"
         seg " $(printf '%3d' "$BATT_PCT")" "$(pct_color $(( 100 - BATT_PCT )))"
         seg "%  " ""
-        local b_left="$ROW_COLORED"
-        local b_left_plain="$ROW_PLAIN"
+        _b_left="$ROW_COLORED"
+        _b_left_plain="$ROW_PLAIN"
 
         row_start
-        seg "$BATT_STATUS" "$C_DIM"
-        local b_val="$ROW_COLORED"
-        local b_val_plain="$ROW_PLAIN"
+        _bat_avail=$(( TOTALW - ${#_b_left_plain} ))
+        (( _bat_avail < 0 )) && _bat_avail=0
+        _b_text="$BATT_STATUS"
+        if (( ${#_b_text} > _bat_avail )); then
+            case "$_b_text" in
+                *discharg*) _b_text="dischg" ;;
+                *charg*)    _b_text="chrg" ;;
+                *attach*)   _b_text="ac" ;;
+            esac
+        fi
+        (( ${#_b_text} > _bat_avail )) && _b_text="${_b_text:0:$_bat_avail}"
+        [ -n "$_b_text" ] && seg "$_b_text" "$C_DIM"
+        _b_val="$ROW_COLORED"
+        _b_val_plain="$ROW_PLAIN"
 
-        local b_pad=$(( TOTALW - ${#b_left_plain} - ${#b_val_plain} ))
-        (( b_pad < 0 )) && b_pad=0
-        FRAME+=("$(printf '%s%*s%s' "$b_left" "$b_pad" "" "$b_val")")
+        _b_pad=$(( TOTALW - ${#_b_left_plain} - ${#_b_val_plain} ))
+        (( _b_pad < 0 )) && _b_pad=0
+        FRAME+=("$(printf '%s%*s%s' "$_b_left" "$_b_pad" "" "$_b_val")")
     fi
 
     # ============================================================
