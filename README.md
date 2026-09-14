@@ -70,6 +70,45 @@ statd --no-bat          # Run without battery
 statd --no-ld --no-bat  # Run without load average or battery
 ```
 
+## Plugins (Optional Features)
+
+StatD keeps the terminal HUD minimal and bloat-free, but allows adding extra features via on-demand plugins:
+
+```sh
+# List plugins
+statd plugins
+
+# Install the streaming API plugin
+statd install api
+```
+
+### Streaming API Plugin (`statd api`)
+
+Expose real-time metrics over an ultra-low CPU HTTP server with JSON and Server-Sent Events (SSE):
+
+```sh
+# Start API server on http://localhost:8080
+statd api
+
+# Run as background daemon
+statd api --daemon --port 8080
+statd api status
+statd api stop
+
+# Query snapshot via curl or script
+curl http://localhost:8080/stats
+```
+
+Connect web dashboards and custom interfaces in real-time with zero polling:
+
+```javascript
+const sse = new EventSource("http://localhost:8080/stream");
+sse.onmessage = (e) => {
+  const stats = JSON.parse(e.data);
+  console.log(`CPU: ${stats.cpu.percent}% | RAM: ${stats.memory.percent}%`);
+};
+```
+
 ## Update
 
 Update to the latest version at any time:
@@ -94,8 +133,11 @@ curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | ba
 
 ## Options
 
-| Flag | Description |
-|------|-------------|
+| Command / Flag | Description |
+|----------------|-------------|
+| `install <name>` | Install a plugin (e.g. `statd install api`) |
+| `plugins` | List available and installed plugins |
+| `api [options]` | Start the streaming API server (after `install api`) |
 | `-u, --update` | Update statd to latest version |
 | `--check-update` | Check for updates |
 | `--config [cmd]` | Manage view toggles (`statd config`) |

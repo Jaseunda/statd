@@ -80,6 +80,7 @@ source "$_LIB_DIR/sensors.sh"
 # shellcheck source=lib/llm.sh
 source "$_LIB_DIR/llm.sh"
 
+STATD_LIB_DIR="$_LIB_DIR"
 unset _LIB_DIR
 # END LIB LOADER
 
@@ -179,6 +180,9 @@ https://github.com/Jaseunda/statd
 Usage:
   statd [options]
   statd config [command]
+  statd install <plugin>
+  statd plugins
+  statd <plugin> [options]
 
 Options:
   -u, --update         Check for and install the latest update
@@ -202,6 +206,12 @@ Interactive Controls:
   s                    Toggle swap row (SWP)
   d                    Toggle disk row (DSK)
   q                    Quit
+
+Plugin Commands:
+  statd install <name>          Install plugin (e.g.: statd install api)
+  statd remove <name>           Uninstall plugin
+  statd plugins                 List available and installed plugins
+  statd api [options]           Start API server (requires api plugin)
 
 Config Commands:
   statd config                  Show current view settings
@@ -387,10 +397,160 @@ statd_update() {
 }
 
 # ------------------------------------------------------------
-# Command line options
+# Plugin system
 # ------------------------------------------------------------
+find_plugin_bin() {
+    local name="$1"
+    [ -z "$name" ] && return 1
+    local cand
+    for cand in \
+        "$(pwd)/plugins/$name/statd-$name" \
+        "$CONFIG_DIR/plugins/$name/statd-$name" \
+        "$CONFIG_DIR/plugins/$name/$name" \
+        "$STATD_LIB_DIR/plugins/$name/statd-$name" \
+        "$STATD_LIB_DIR/plugins/$name/$name" \
+        "$(dirname "$STATD_LIB_DIR")/plugins/$name/statd-$name" \
+        "$(dirname "$STATD_LIB_DIR")/plugins/$name/$name"; do
+        if [ -x "$cand" ]; then
+            printf '%s' "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+statd_plugin_install() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        printf 'Usage: statd install <plugin>\n'
+        printf 'Available plugins:\n'
+        printf '  api    Lightweight HTTP JSON & SSE metrics streaming API\n'
+        return 1
+    fi
+
+    local target_dir="$STATD_LIB_DIR/plugins/$name"
+    if [ ! -w "$STATD_LIB_DIR" ] 2>/dev/null; then
+        target_dir="$CONFIG_DIR/plugins/$name"
+    fi
+    mkdir -p "$target_dir"
+
+    printf '  \033[1mInstalling plugin:\033[0m %s\n' "$name"
+
+    # Check local repository source or current working directory first
+    local repo_plugin_dir="$(dirname "$STATD_LIB_DIR")/plugins/$name"
+    local cwd_plugin_dir="$(pwd)/plugins/$name"
+    if [ -d "$repo_plugin_dir" ] && [ -f "$repo_plugin_dir/statd-$name" ]; then
+        cp -R "$repo_plugin_dir/"* "$target_dir/"
+        chmod +x "$target_dir/statd-$name" 2>/dev/null || true
+        printf '  \033[32m+\033[0m  Installed %s to %s\n' "$name" "$target_dir"
+    elif [ -d "$cwd_plugin_dir" ] && [ -f "$cwd_plugin_dir/statd-$name" ]; then
+        cp -R "$cwd_plugin_dir/"* "$target_dir/"
+        chmod +x "$target_dir/statd-$name" 2>/dev/null || true
+        printf '  \033[32m+\033[0m  Installed %s to %s\n' "$name" "$target_dir"
+    else
+        # Download from GitHub repository
+        local base_url="https://raw.githubusercontent.com/Jaseunda/statd/main/plugins/$name"
+        printf '  \033[32m+\033[0m  Downloading %s from GitHub ...\n' "$name"
+        if curl -fsSL "$base_url/statd-$name" -o "$target_dir/statd-$name"; then
+            chmod +x "$target_dir/statd-$name"
+            curl -fsSL "$base_url/README.md" -o "$target_dir/README.md" 2>/dev/null || true
+            printf '  \033[32m+\033[0m  Installed %s to %s\n' "$name" "$target_dir"
+        else
+            printf '  \033[31mx\033[0m  Failed to download plugin "%s"\n' "$name" >&2
+            rm -rf "$target_dir"
+            return 1
+        fi
+    fi
+
+    printf '\n  \033[1;32mPlugin installed successfully!\033[0m\n\n'
+    printf '  Run:    statd %s --help\n' "$name"
+    printf '  Start:  statd %s\n\n' "$name"
+    return 0
+}
+
+statd_plugin_remove() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        printf 'Usage: statd remove <plugin>\n'
+        return 1
+    fi
+    local removed=0
+    for d in "$STATD_LIB_DIR/plugins/$name" "$CONFIG_DIR/plugins/$name"; do
+        if [ -d "$d" ]; then
+            rm -rf "$d"
+            printf '  \033[32m+\033[0m  Removed %s\n' "$d"
+            removed=1
+        fi
+    done
+    if (( removed )); then
+        printf '  Plugin "%s" uninstalled.\n' "$name"
+    else
+        printf '  Plugin "%s" is not installed.\n' "$name"
+    fi
+    return 0
+}
+
+statd_plugin_list() {
+    printf '\n  \033[1mStatD Plugins\033[0m\n\n'
+    local api_bin
+    api_bin=$(find_plugin_bin "api" 2>/dev/null || true)
+    if [ -n "$api_bin" ]; then
+        printf '  \033[32m●\033[0m  \033[1mapi\033[0m       Lightweight HTTP JSON & SSE metrics streaming API  \033[32m[installed]\033[0m\n'
+        printf '            Run: statd api (or statd api --help)\n'
+    else
+        printf '  \033[2m○\033[0m  \033[1mapi\033[0m       Lightweight HTTP JSON & SSE metrics streaming API  \033[2m[available]\033[0m\n'
+        printf '            Install: statd install api\n'
+    fi
+    printf '\n'
+}
+
+# ------------------------------------------------------------
+# Command line options & Plugin Dispatch
+# ------------------------------------------------------------
+if [ -n "${1:-}" ]; then
+    _plug_bin=$(find_plugin_bin "$1" 2>/dev/null || true)
+    if [ -n "$_plug_bin" ] && [ -x "$_plug_bin" ]; then
+        shift
+        exec "$_plug_bin" "$@"
+    fi
+fi
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        install)
+            shift
+            statd_plugin_install "$@"
+            exit $?
+            ;;
+        remove|uninstall)
+            shift
+            statd_plugin_remove "$@"
+            exit $?
+            ;;
+        plugins|plugin)
+            shift
+            case "${1:-}" in
+                install)
+                    shift
+                    statd_plugin_install "$@"
+                    exit $?
+                    ;;
+                remove|uninstall)
+                    shift
+                    statd_plugin_remove "$@"
+                    exit $?
+                    ;;
+                *)
+                    statd_plugin_list
+                    exit 0
+                    ;;
+            esac
+            ;;
+        api)
+            printf '  \033[33m!\033[0m  Plugin "api" is not installed.\n'
+            printf '     Install it with:  statd install api\n\n'
+            exit 1
+            ;;
         config)
             shift
             statd_config "$@"

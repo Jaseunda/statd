@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+# statd-api — lightweight HTTP JSON & SSE metrics server
+# Part of StatD: https://github.com/Jaseunda/statd
+
+set -eo pipefail
+
+VERSION="0.1.1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve StatD libraries directory
+LIB_DIR=""
+if [ -f "$SCRIPT_DIR/../../lib/sensors.sh" ]; then
+    LIB_DIR="$(cd "$SCRIPT_DIR/../../lib" && pwd)"
+elif [ -n "${STATD_LIBDIR:-}" ] && [ -f "$STATD_LIBDIR/sensors.sh" ]; then
+    LIB_DIR="$STATD_LIBDIR"
+elif [ -f "$HOME/.local/lib/statd/sensors.sh" ]; then
+    LIB_DIR="$HOME/.local/lib/statd"
+elif [ -f "/usr/local/lib/statd/sensors.sh" ]; then
+    LIB_DIR="/usr/local/lib/statd"
+elif [ -f "/usr/lib/statd/sensors.sh" ]; then
+    LIB_DIR="/usr/lib/statd"
+else
+    LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+if [ -f "$LIB_DIR/sensors.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/sensors_linux.sh" 2>/dev/null || true
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/sensors_macos.sh" 2>/dev/null || true
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/sensors.sh"
+else
+    # Fallback definitions if libraries cannot be found
+    OS_TYPE="linux"
+    [ "$(uname -s)" = "Darwin" ] && OS_TYPE="macos"
+    NCPU=1
+    get_temp() { printf '%s' '--'; }
+    get_cpu_freq() { printf '%s' '--'; }
+    get_cpu_raw() { printf '%d %d' 0 0; }
+    get_memory() { printf '%d %d %d %d' 0 0 0 0; }
+    get_disk() { printf '%d %d' 0 0; }
+    get_battery() { printf '%s' ''; }
+    get_loadavg() { printf '%s %s %s %s' '--' '--' '--' '--'; }
+    get_uptime() { uptime 2>/dev/null || printf '%s' '--'; }
+fi
+
+# Config and PID file paths
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/statd"
+PID_FILE="$CONFIG_DIR/statd-api.pid"
+LOG_FILE="$CONFIG_DIR/statd-api.log"
+mkdir -p "$CONFIG_DIR"
+
+# Defaults
+PORT="${STATD_API_PORT:-8080}"
+HOST="${STATD_API_HOST:-127.0.0.1}"
+INTERVAL="${STATD_API_INTERVAL:-1}"
+DAEMON=0
+ONCE=0
+
+show_help() {
+    cat <<EOF
+statd-api $VERSION — lightweight HTTP JSON & SSE metrics server
+Part of StatD: https://github.com/Jaseunda/statd
+
+Usage:
+  statd api [options]
+  statd api [command]
+
+Commands:
+  start               Start the API server (default)
+  status              Check daemon status
+  stop                Stop background daemon
+  restart             Restart background daemon
+  logs                Tail daemon logs
+
+Options:
+  -p, --port <port>   Port to listen on (default: 8080, env: STATD_API_PORT)
+  -H, --host <host>   Host to bind (default: 127.0.0.1, use 0.0.0.0 for public access)
+  -i, --interval <s>  SSE streaming update interval in seconds (default: 1)
+  -d, --daemon        Run in background as a daemon
+  -o, --once          Output a single JSON snapshot to stdout and exit
+  -v, --version       Show version
+  -h, --help          Show this help message
+
+Endpoints:
+  GET /               API overview & endpoints list
+  GET /stats          Instantaneous system metrics snapshot (JSON)
+  GET /stream         Server-Sent Events (SSE) live real-time metrics stream
+  GET /health         Health check (returns {"status":"ok"})
+
+Examples:
+  statd api                         # Start API server on http://127.0.0.1:8080
+  statd api --port 9000 --daemon    # Run in background on port 9000
+  statd api --once                  # Output JSON to stdout (for scripts/curl)
+  curl http://127.0.0.1:8080/stats  # Query metrics JSON
+EOF
+}
+
+# ------------------------------------------------------------
+# JSON Generator
+# ------------------------------------------------------------
+get_json_snapshot() {
+    local now_ts
+    now_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+
+    local mem_total=0 mem_used=0 swp_total=0 swp_used=0 mem_pct=0 swp_pct=0
+    read -r mem_total mem_used swp_total swp_used <<< "$(get_memory)"
+    (( mem_total > 0 )) && mem_pct=$(( mem_used * 100 / mem_total )) || mem_pct=0
+    (( swp_total > 0 )) && swp_pct=$(( swp_used * 100 / swp_total )) || swp_pct=0
+
+    # Convert kB to bytes for standard JSON representation
+    local mem_total_b=$(( mem_total * 1024 ))
+    local mem_used_b=$(( mem_used * 1024 ))
+    local swp_total_b=$(( swp_total * 1024 ))
+    local swp_used_b=$(( swp_used * 1024 ))
+
+    local dsk_total=0 dsk_used=0 dsk_pct=0
+    read -r dsk_total dsk_used <<< "$(get_disk)"
+    (( dsk_total > 0 )) && dsk_pct=$(( dsk_used * 100 / dsk_total )) || dsk_pct=0
+
+    local l1="--" l5="--" l15="--" nproc="--"
+    read -r l1 l5 l15 nproc <<< "$(get_loadavg)"
+
+    local bat_pct="" bat_status=""
+    read -r bat_pct bat_status <<< "$(get_battery)"
+
+    local cpu_freq
+    cpu_freq=$(get_cpu_freq)
+    local temp_c
+    temp_c=$(get_temp)
+    local uptime_s
+    uptime_s=$(get_uptime)
+
+    local cpu_pct=0
+    local c_tot c_idl
+    read -r c_tot c_idl <<< "$(get_cpu_raw)"
+    if [[ "$c_tot" == "PCT" ]]; then
+        cpu_pct="${c_idl:-0}"
+    fi
+
+    # Escape strings safely for JSON
+    bat_status="${bat_status//\"/\\\"}"
+    uptime_s="${uptime_s//\"/\\\"}"
+
+    printf '{\n'
+    printf '  "timestamp": "%s",\n' "$now_ts"
+    printf '  "uptime": "%s",\n' "$uptime_s"
+    printf '  "cpu": {\n'
+    printf '    "percent": %s,\n' "$cpu_pct"
+    printf '    "freq": "%s",\n' "$cpu_freq"
+    printf '    "temp": "%s",\n' "$temp_c"
+    printf '    "cores": %s\n' "${NCPU:-1}"
+    printf '  },\n'
+    printf '  "memory": {\n'
+    printf '    "total_bytes": %s,\n' "$mem_total_b"
+    printf '    "used_bytes": %s,\n' "$mem_used_b"
+    printf '    "percent": %s\n' "$mem_pct"
+    printf '  },\n'
+    printf '  "swap": {\n'
+    printf '    "total_bytes": %s,\n' "$swp_total_b"
+    printf '    "used_bytes": %s,\n' "$swp_used_b"
+    printf '    "percent": %s\n' "$swp_pct"
+    printf '  },\n'
+    printf '  "disk": {\n'
+    printf '    "total_bytes": %s,\n' "$dsk_total"
+    printf '    "used_bytes": %s,\n' "$dsk_used"
+    printf '    "percent": %s\n' "$dsk_pct"
+    printf '  },\n'
+    printf '  "load": {\n'
+    printf '    "l1": "%s",\n' "$l1"
+    printf '    "l5": "%s",\n' "$l5"
+    printf '    "l15": "%s"\n' "$l15"
+    printf '  },\n'
+    printf '  "battery": {\n'
+    if [ -n "$bat_pct" ]; then
+        printf '    "percent": %s,\n' "$bat_pct"
+        printf '    "status": "%s"\n' "$bat_status"
+    else
+        printf '    "present": false\n'
+    fi
+    printf '  }\n'
+    printf '}\n'
+}
+
+# ------------------------------------------------------------
+# Daemon Management
+# ------------------------------------------------------------
+daemon_status() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf '  \033[32m●\033[0m  statd-api is running (PID %s)\n' "$pid"
+            printf '     Listening on: http://%s:%s\n' "$HOST" "$PORT"
+            return 0
+        fi
+    fi
+    printf '  \033[31m○\033[0m  statd-api is stopped\n'
+    return 1
+}
+
+daemon_stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf '  \033[33m!\033[0m  Stopping statd-api (PID %s) ...\n' "$pid"
+            kill "$pid" 2>/dev/null || true
+            for _ in {1..20}; do
+                if ! kill -0 "$pid" 2>/dev/null; then break; fi
+                sleep 0.1
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            rm -f "$PID_FILE"
+            printf '  \033[32m+\033[0m  Stopped.\n'
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+    printf '  statd-api is not running.\n'
+    return 0
+}
+
+daemon_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        tail -n 50 -f "$LOG_FILE"
+    else
+        printf '  No log file found at %s\n' "$LOG_FILE"
+    fi
+}
+
+# ------------------------------------------------------------
+# Server Implementation (Python 3 with zero external deps)
+# ------------------------------------------------------------
+run_python_server() {
+    local host="$1"
+    local port="$2"
+    local interval="$3"
+    local self_bin="$4"
+
+    python3 - "$host" "$port" "$interval" "$self_bin" "$VERSION" << 'PY_EOF'
+import sys, os, time, json, socket, threading, subprocess
+import http.server, socketserver, urllib.parse
+
+HOST = sys.argv[1]
+PORT = int(sys.argv[2])
+INTERVAL = float(sys.argv[3])
+SELF_BIN = sys.argv[4]
+VERSION = sys.argv[5]
+
+# Cached latest JSON snapshot
+LATEST_LOCK = threading.Lock()
+LATEST_SNAPSHOT = "{}"
+LATEST_BYTES = b"{}"
+
+def snapshot_worker():
+    global LATEST_SNAPSHOT, LATEST_BYTES
+    while True:
+        try:
+            raw = subprocess.check_output([SELF_BIN, "--once"], stderr=subprocess.DEVNULL)
+            with LATEST_LOCK:
+                LATEST_SNAPSHOT = raw.decode("utf-8", errors="replace")
+                LATEST_BYTES = raw
+        except Exception:
+            pass
+        time.sleep(INTERVAL)
+
+# Start background cache worker (uses zero CPU in between ticks)
+worker_thread = threading.Thread(target=snapshot_worker, daemon=True)
+worker_thread.start()
+
+# Initial wait for first snapshot
+time.sleep(0.15)
+
+class StatDAPIHandler(http.server.BaseHTTPRequestHandler):
+    def send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Cache-Control")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_cors_headers()
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if not path:
+            path = "/"
+
+        if path == "/health":
+            body = b'{"status":"ok"}\n'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/":
+            overview = {
+                "name": "StatD API",
+                "version": VERSION,
+                "endpoints": {
+                    "/stats": "Instantaneous system metrics snapshot (JSON)",
+                    "/stream": "Server-Sent Events (SSE) live real-time metrics stream",
+                    "/health": "Health check"
+                }
+            }
+            body = (json.dumps(overview, indent=2) + "\n").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/stats":
+            with LATEST_LOCK:
+                body = LATEST_BYTES
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path in ("/stream", "/sse"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_cors_headers()
+            self.end_headers()
+
+            try:
+                while True:
+                    with LATEST_LOCK:
+                        snapshot = LATEST_SNAPSHOT
+                    chunk = f"data: {snapshot.strip()}\n\n".encode("utf-8")
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    time.sleep(INTERVAL)
+            except (BrokenPipeError, ConnectionResetError, socket.error):
+                return
+            return
+
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_cors_headers()
+        self.end_headers()
+        self.wfile.write(b'{"error":"not_found"}\n')
+
+    def log_message(self, fmt, *args):
+        # Suppress request spam in stdout, write to stderr if needed
+        pass
+
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+server = ThreadedHTTPServer((HOST, PORT), StatDAPIHandler)
+sys.stderr.write(f"  \033[32m+\033[0m  StatD API server running on http://{HOST}:{PORT}\n")
+sys.stderr.write(f"  \033[32m+\033[0m  Endpoints: /stats (JSON), /stream (SSE), /health\n\n")
+sys.stderr.flush()
+
+try:
+    server.serve_forever()
+except KeyboardInterrupt:
+    pass
+finally:
+    server.server_close()
+PY_EOF
+}
+
+# ------------------------------------------------------------
+# Fallback netcat Server (for minimal systems without Python)
+# ------------------------------------------------------------
+run_nc_server() {
+    local host="$1"
+    local port="$2"
+
+    printf '  \033[33m!\033[0m  python3 not found; falling back to netcat HTTP server on %s:%s\n' "$host" "$port"
+    while true; do
+        local json_data
+        json_data=$(get_json_snapshot)
+        local len=${#json_data}
+        local response="HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: $len\r\nConnection: close\r\n\r\n$json_data"
+        printf '%b' "$response" | nc -l -p "$port" 2>/dev/null || sleep 1
+    done
+}
+
+# ------------------------------------------------------------
+# Main CLI Parsing
+# ------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        status)
+            daemon_status
+            exit $?
+            ;;
+        stop)
+            daemon_stop
+            exit $?
+            ;;
+        restart)
+            daemon_stop
+            DAEMON=1
+            shift
+            ;;
+        logs)
+            daemon_logs
+            exit 0
+            ;;
+        start)
+            shift
+            ;;
+        -o|--once)
+            ONCE=1
+            shift
+            ;;
+        -p|--port)
+            PORT="$2"
+            shift 2
+            ;;
+        -H|--host)
+            HOST="$2"
+            shift 2
+            ;;
+        -i|--interval)
+            INTERVAL="$2"
+            shift 2
+            ;;
+        -d|--daemon)
+            DAEMON=1
+            shift
+            ;;
+        -v|--version)
+            printf 'statd-api %s\n' "$VERSION"
+            exit 0
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            printf 'statd-api: unrecognized argument: %s (see --help)\n' "$1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# If single snapshot requested:
+if (( ONCE )); then
+    get_json_snapshot
+    exit 0
+fi
+
+# Check if already running when starting as daemon
+if (( DAEMON )); then
+    if [ -f "$PID_FILE" ]; then
+        old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            printf '  \033[33m!\033[0m  statd-api is already running (PID %s)\n' "$old_pid"
+            printf '     Listening on: http://%s:%s\n' "$HOST" "$PORT"
+            exit 0
+        fi
+    fi
+
+    # Launch daemon in background
+    nohup "$0" --port "$PORT" --host "$HOST" --interval "$INTERVAL" >> "$LOG_FILE" 2>&1 &
+    new_pid=$!
+    echo "$new_pid" > "$PID_FILE"
+    printf '  \033[32m+\033[0m  statd-api started in background (PID %s)\n' "$new_pid"
+    printf '     URL: http://%s:%s/stats\n' "$HOST" "$PORT"
+    printf '     Log: %s\n' "$LOG_FILE"
+    exit 0
+fi
+
+# Foreground server
+if command -v python3 >/dev/null 2>&1; then
+    run_python_server "$HOST" "$PORT" "$INTERVAL" "$0"
+elif command -v nc >/dev/null 2>&1; then
+    run_nc_server "$HOST" "$PORT"
+else
+    printf 'Error: Neither python3 nor nc (netcat) found to run HTTP server.\n' >&2
+    exit 1
+fi

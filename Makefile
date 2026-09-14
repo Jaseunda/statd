@@ -42,3 +42,4 @@ check:
 	@bash -n lib/sensors_macos.sh  && echo "OK  lib/sensors_macos.sh"
 	@bash -n lib/sensors.sh && echo "OK  lib/sensors.sh"
 	@bash -n lib/llm.sh     && echo "OK  lib/llm.sh"
+	@bash -n plugins/api/statd-api && echo "OK  plugins/api/statd-api"
