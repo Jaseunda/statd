@@ -119,10 +119,34 @@ _macos_get_memory() {
 
 # Returns: <pct> <status-string>  or empty if no battery.
 _macos_get_battery() {
-    local line pct status
+    local line pct state status
     line=$(pmset -g batt 2>/dev/null | grep -E '[0-9]+%')
     pct=$(printf '%s' "$line" | grep -oE '[0-9]+%' | tr -d '%' | head -1)
-    status=$(printf '%s' "$line" | awk -F';' '{sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2}')
+    [ -z "$pct" ] && return
+
+    if echo "$line" | grep -qi 'not charging'; then
+        state="not charging"
+    elif echo "$line" | grep -qi 'charging'; then
+        state="charging"
+    elif echo "$line" | grep -qi 'discharging'; then
+        state="discharging"
+    elif echo "$line" | grep -qi 'finishing charge\|charged'; then
+        state="full"
+    else
+        state=""
+    fi
+
+    if echo "$line" | grep -qi 'AC attached'; then
+        if [ -n "$state" ]; then
+            status="AC ($state)"
+        else
+            status="AC attached"
+        fi
+    else
+        status="$state"
+    fi
+    [ -z "$status" ] && status="battery"
+
     [[ "$pct" =~ ^[0-9]+$ ]] && printf '%s %s' "$pct" "$status" || printf '%s' ''
 }
 

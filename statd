@@ -84,16 +84,52 @@ unset _LIB_DIR
 # END LIB LOADER
 
 # ------------------------------------------------------------
-# Configuration (all overridable via environment)
+# Configuration (loaded from ~/.config/statd/config, env, or CLI)
 # ------------------------------------------------------------
-INTERVAL="${INTERVAL:-1}"           # seconds between refresh
-SLOW_EVERY="${SLOW_EVERY:-30}"      # seconds between slow-tier updates
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/statd"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+# View toggles (1 = show, 0 = hide)
+SHOW_CPU=1
+SHOW_RAM=1
+SHOW_SWP=1
+SHOW_DSK=1
+SHOW_LD=1
+SHOW_BAT=1
+SHOW_LLM=1
+
+# Defaults
+INTERVAL=1
+SLOW_EVERY=30
+PID_SCAN_EVERY=5
+BAR_WIDTH=20
+CORE_BAR_W=5
+CORE_STYLE="spark"
+CORES_SHOWN=0
+LLM_PORT=8080
+
+# Source persistent config file if present
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+# Environment variable overrides
+INTERVAL="${INTERVAL:-1}"
+SLOW_EVERY="${SLOW_EVERY:-30}"
 PID_SCAN_EVERY="${PID_SCAN_EVERY:-5}"
-BAR_WIDTH="${BAR_WIDTH:-20}"        # gradient bar character width
-CORE_BAR_W="${CORE_BAR_W:-5}"       # per-core mini-bar width
-CORE_STYLE="${CORE_STYLE:-spark}"   # spark | dots | seg | mini
-CORES_SHOWN="${CORES_SHOWN:-0}"     # 1 = show per-core panel on startup
-LLM_PORT="${LLM_PORT:-8080}"        # llama-server metrics port
+BAR_WIDTH="${BAR_WIDTH:-20}"
+CORE_BAR_W="${CORE_BAR_W:-5}"
+CORE_STYLE="${CORE_STYLE:-spark}"
+CORES_SHOWN="${CORES_SHOWN:-0}"
+LLM_PORT="${LLM_PORT:-8080}"
+SHOW_CPU="${SHOW_CPU:-1}"
+SHOW_RAM="${SHOW_RAM:-1}"
+SHOW_SWP="${SHOW_SWP:-1}"
+SHOW_DSK="${SHOW_DSK:-1}"
+SHOW_LD="${SHOW_LD:-1}"
+SHOW_BAT="${SHOW_BAT:-1}"
+SHOW_LLM="${SHOW_LLM:-1}"
 
 READ_TIMEOUT="0.1"
 if ! read -t 0.1 _test_to </dev/null 2>/dev/null; then
@@ -142,27 +178,137 @@ https://github.com/Jaseunda/statd
 
 Usage:
   statd [options]
+  statd config [command]
 
 Options:
   -u, --update         Check for and install the latest update
   --check-update       Check if an update is available without installing
+  --config [cmd]       Manage view toggles and settings (or: statd config)
+  --no-ld              Hide load average row
+  --no-bat             Hide battery row
+  --no-swp             Hide swap row
+  --no-dsk             Hide disk row
+  --no-cpu             Hide CPU row
+  --no-ram             Hide RAM row
   -c, --cores          Start with per-core CPU panel visible
   -i, --interval <sec> Refresh interval in seconds (default: 1)
   -v, --version        Print version and exit
   -h, --help           Show this help message
 
-Controls (interactive):
+Interactive Controls:
   c                    Toggle per-core CPU panel
+  l                    Toggle load average row (LD)
+  b                    Toggle battery row (BAT)
+  s                    Toggle swap row (SWP)
+  d                    Toggle disk row (DSK)
   q                    Quit
 
-Environment Variables:
-  INTERVAL=<sec>       Refresh interval (default: 1)
-  SLOW_EVERY=<sec>     Interval for disk/battery/uptime polls (default: 30)
-  BAR_WIDTH=<n>        Gradient bar character width (default: 20)
-  CORE_STYLE=<style>   Per-core style: spark | dots | seg | mini (default: spark)
-  CORES_SHOWN=0|1      Start with per-core panel shown (default: 0)
-  LLM_PORT=<port>      llama-server metrics port (default: 8080)
+Config Commands:
+  statd config                  Show current view settings
+  statd config disable <view>   Turn off view (ld, bat, swp, dsk, cpu, ram)
+  statd config enable <view>    Turn on view
+  statd config edit             Edit configuration in \$EDITOR
+  statd config reset            Reset to defaults
 EOF
+}
+
+_on_off() {
+    (( ${1:-1} )) && printf '\033[32mon\033[0m ' || printf '\033[31moff\033[0m'
+}
+
+_set_config() {
+    local key="$1" val="$2"
+    mkdir -p "$CONFIG_DIR"
+    touch "$CONFIG_FILE"
+    if grep -q "^${key}=" "$CONFIG_FILE" 2>/dev/null; then
+        sed -i '' "s|^${key}=.*|${key}=${val}|" "$CONFIG_FILE" 2>/dev/null || \
+        sed -i "s|^${key}=.*|${key}=${val}|" "$CONFIG_FILE" 2>/dev/null || true
+    else
+        printf '%s=%s\n' "$key" "$val" >> "$CONFIG_FILE"
+    fi
+}
+
+statd_config() {
+    mkdir -p "$CONFIG_DIR"
+    local subcmd="${1:-}"
+    shift || true
+
+    case "$subcmd" in
+        disable|off)
+            local target="${1:-}"
+            target=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+            case "$target" in
+                ld|load)     _set_config "SHOW_LD" "0" ;;
+                bat|battery) _set_config "SHOW_BAT" "0" ;;
+                swp|swap)    _set_config "SHOW_SWP" "0" ;;
+                dsk|disk)    _set_config "SHOW_DSK" "0" ;;
+                cpu)         _set_config "SHOW_CPU" "0" ;;
+                ram|mem)     _set_config "SHOW_RAM" "0" ;;
+                llm)         _set_config "SHOW_LLM" "0" ;;
+                *)
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm)\n' "$target" >&2
+                    return 1
+                    ;;
+            esac
+            printf '\033[32m+\033[0m  Disabled %s in %s\n' "$target" "$CONFIG_FILE"
+            ;;
+        enable|on)
+            local target="${1:-}"
+            target=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+            case "$target" in
+                ld|load)     _set_config "SHOW_LD" "1" ;;
+                bat|battery) _set_config "SHOW_BAT" "1" ;;
+                swp|swap)    _set_config "SHOW_SWP" "1" ;;
+                dsk|disk)    _set_config "SHOW_DSK" "1" ;;
+                cpu)         _set_config "SHOW_CPU" "1" ;;
+                ram|mem)     _set_config "SHOW_RAM" "1" ;;
+                llm)         _set_config "SHOW_LLM" "1" ;;
+                *)
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm)\n' "$target" >&2
+                    return 1
+                    ;;
+            esac
+            printf '\033[32m+\033[0m  Enabled %s in %s\n' "$target" "$CONFIG_FILE"
+            ;;
+        set)
+            local key="${1:-}" val="${2:-}"
+            if [ -z "$key" ] || [ -z "$val" ]; then
+                printf 'Usage: statd config set <KEY> <VALUE>\n' >&2
+                return 1
+            fi
+            _set_config "$key" "$val"
+            printf '\033[32m+\033[0m  Set %s=%s in %s\n' "$key" "$val" "$CONFIG_FILE"
+            ;;
+        path)
+            printf '%s\n' "$CONFIG_FILE"
+            ;;
+        edit)
+            "${EDITOR:-nano}" "$CONFIG_FILE"
+            ;;
+        reset)
+            rm -f "$CONFIG_FILE"
+            printf '\033[32m+\033[0m  Reset configuration (removed %s)\n' "$CONFIG_FILE"
+            ;;
+        ""|show|list)
+            printf '\033[1mstatd configuration\033[0m\n'
+            printf 'Config file: %s\n\n' "$CONFIG_FILE"
+            printf 'Views:\n'
+            printf '  CPU: %s    RAM: %s    SWP: %s    DSK: %s\n' \
+                "$(_on_off "$SHOW_CPU")" "$(_on_off "$SHOW_RAM")" "$(_on_off "$SHOW_SWP")" "$(_on_off "$SHOW_DSK")"
+            printf '  LD:  %s    BAT: %s    LLM: %s\n\n' \
+                "$(_on_off "$SHOW_LD")" "$(_on_off "$SHOW_BAT")" "$(_on_off "$SHOW_LLM")"
+            printf 'Commands:\n'
+            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, ram)\n'
+            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, ram)\n'
+            printf '  statd config set <KEY> <VAL>  (set any setting, e.g. INTERVAL 2)\n'
+            printf '  statd config edit             (open in editor)\n'
+            printf '  statd config reset            (reset to defaults)\n'
+            ;;
+        *)
+            printf 'Unknown config command: %s (see "statd config")\n' "$subcmd" >&2
+            return 1
+            ;;
+    esac
 }
 
 statd_check_update() {
@@ -245,6 +391,40 @@ statd_update() {
 # ------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        config)
+            shift
+            statd_config "$@"
+            exit $?
+            ;;
+        --config)
+            shift
+            statd_config "$@"
+            exit $?
+            ;;
+        --no-ld|--hide-ld)
+            SHOW_LD=0
+            shift
+            ;;
+        --no-bat|--hide-bat)
+            SHOW_BAT=0
+            shift
+            ;;
+        --no-swp|--hide-swp)
+            SHOW_SWP=0
+            shift
+            ;;
+        --no-dsk|--hide-dsk)
+            SHOW_DSK=0
+            shift
+            ;;
+        --no-cpu)
+            SHOW_CPU=0
+            shift
+            ;;
+        --no-ram)
+            SHOW_RAM=0
+            shift
+            ;;
         -u|--update|update)
             statd_update
             exit $?
@@ -492,45 +672,53 @@ while true; do
     # ============================================================
     declare -a LEFTP=() LEFTC=() VALP=() VALC=() ROWPCT=() ROWMODE=()
 
-    row_start
-    seg "CPU" "$C_BOLD"
-    seg " $(printf '%3s' "$CPU")" "$(pct_color "$CPU")"
-    seg "%  " ""
-    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
-    row_start
-    seg "$FREQ" "$C_BLUE"
-    seg "  " ""
-    seg "$TEMP_STR" "$TEMP_COLOR"
-    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("load")
+    if (( SHOW_CPU )); then
+        row_start
+        seg "CPU" "$C_BOLD"
+        seg " $(printf '%3s' "$CPU")" "$(pct_color "$CPU")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        seg "$FREQ" "$C_BLUE"
+        seg "  " ""
+        seg "$TEMP_STR" "$TEMP_COLOR"
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("load")
+    fi
 
-    row_start
-    seg "RAM" "$C_BOLD"
-    seg " $(printf '%3d' "$MEM_PCT")" "$(pct_color "$MEM_PCT")"
-    seg "%  " ""
-    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
-    row_start
-    seg "$(human "$MEM_USED_B")/$(human "$MEM_TOTAL_B")" "$C_DIM"
-    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("load")
+    if (( SHOW_RAM )); then
+        row_start
+        seg "RAM" "$C_BOLD"
+        seg " $(printf '%3d' "$MEM_PCT")" "$(pct_color "$MEM_PCT")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        seg "$(human "$MEM_USED_B")/$(human "$MEM_TOTAL_B")" "$C_DIM"
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("load")
+    fi
 
-    row_start
-    seg "SWP" "$C_BOLD"
-    seg " $(printf '%3d' "$SWAP_PCT")" "$C_MAG"
-    seg "%  " ""
-    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
-    row_start
-    seg "$(human "$SWAP_USED_B")/$(human "$SWAP_TOTAL_B")" "$C_MAG"
-    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("mag")
+    if (( SHOW_SWP )); then
+        row_start
+        seg "SWP" "$C_BOLD"
+        seg " $(printf '%3d' "$SWAP_PCT")" "$C_MAG"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        seg "$(human "$SWAP_USED_B")/$(human "$SWAP_TOTAL_B")" "$C_MAG"
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("mag")
+    fi
 
-    row_start
-    seg "DSK" "$C_BOLD"
-    seg " $(printf '%3d' "$DISK_PCT")" "$(pct_color "$DISK_PCT")"
-    seg "%  " ""
-    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
-    row_start
-    seg "$(human "$DISK_USED")/$(human "$DISK_TOTAL")" "$C_DIM"
-    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("load")
+    if (( SHOW_DSK )); then
+        row_start
+        seg "DSK" "$C_BOLD"
+        seg " $(printf '%3d' "$DISK_PCT")" "$(pct_color "$DISK_PCT")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        seg "$(human "$DISK_USED")/$(human "$DISK_TOTAL")" "$C_DIM"
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("load")
+    fi
 
-    if [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
+    if (( SHOW_LD )) && [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
         row_start
         seg "LD" "$C_BOLD"
         seg " $(printf '%3d' "$LD_PCT")" "$(pct_color "$LD_PCT")"
@@ -542,8 +730,11 @@ while true; do
     fi
 
     VALMAX=0
+    LEFTW=0
     for v in "${VALP[@]}"; do (( ${#v} > VALMAX )) && VALMAX=${#v}; done
-    TOTALW=$(( ${#LEFTP[0]} + VALMAX ))
+    for l in "${LEFTP[@]}"; do (( ${#l} > LEFTW )) && LEFTW=${#l}; done
+    TOTALW=$(( LEFTW + VALMAX ))
+    (( TOTALW < BAR_WIDTH )) && TOTALW=$BAR_WIDTH
 
     # ---- Per-core panel ----
     CORE_ROWS=()
@@ -626,7 +817,7 @@ while true; do
     done
 
     # ---- LLM row ----
-    if [ -n "$TPS_STR" ] || [ -n "$LCPU_STR" ] || [ -n "$RSS_STR" ]; then
+    if (( SHOW_LLM )) && { [ -n "$TPS_STR" ] || [ -n "$LCPU_STR" ] || [ -n "$RSS_STR" ]; }; then
         row_start
         seg "LLM" "$C_BOLD"
         [ -n "$TPS_STR" ]  && seg " ${TPS_STR} t/s" "$C_CYAN"
@@ -636,7 +827,7 @@ while true; do
     fi
 
     # ---- Battery row ----
-    if [ -n "$BATT_PCT" ]; then
+    if (( SHOW_BAT )) && [ -n "$BATT_PCT" ]; then
         row_start
         seg "BAT" "$C_BOLD"
         seg " $(printf '%3d' "$BATT_PCT")" "$(pct_color $(( 100 - BATT_PCT )))"
@@ -684,6 +875,10 @@ while true; do
         fi
         case "$key" in
             c|C) CORES_SHOWN=$(( 1 - CORES_SHOWN )); break ;;
+            l|L) SHOW_LD=$(( 1 - SHOW_LD )); break ;;
+            b|B) SHOW_BAT=$(( 1 - SHOW_BAT )); break ;;
+            s|S) SHOW_SWP=$(( 1 - SHOW_SWP )); break ;;
+            d|D) SHOW_DSK=$(( 1 - SHOW_DSK )); break ;;
             q|Q) cleanup ;;
         esac
     done
