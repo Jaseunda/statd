@@ -40,48 +40,623 @@ VERSION="0.1.1"
 # ------------------------------------------------------------
 # Locate the lib directory (supports in-tree dev and installed)
 # ------------------------------------------------------------
-# BEGIN LIB LOADER
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_PREFIX_DIR="$(dirname "$_SCRIPT_DIR")"
-_LIB_DIR=""
+# --- Standalone Inlined Libraries ---
+# colors.sh — terminal color variables and percentage colorizer
+# Part of statd: https://github.com/Jaseunda/statd
 
-for _d in \
-    "$_SCRIPT_DIR/lib" \
-    "$_PREFIX_DIR/lib/statd" \
-    "/usr/local/lib/statd" \
-    "/opt/homebrew/lib/statd" \
-    "/usr/lib/statd" \
-    "/usr/share/statd/lib"
-do
-    if [ -d "$_d" ]; then
-        _LIB_DIR="$_d"
-        break
-    fi
-done
-
-if [ -z "$_LIB_DIR" ]; then
-    printf 'statd: cannot locate lib directory\n' >&2
-    exit 1
+if [ -t 1 ]; then
+    C_RESET=$'\033[0m'
+    C_DIM=$'\033[2m'
+    C_BOLD=$'\033[1m'
+    C_GREEN=$'\033[32m'
+    C_YELLOW=$'\033[33m'
+    C_RED=$'\033[31m'
+    C_CYAN=$'\033[36m'
+    C_BLUE=$'\033[34m'
+    C_MAG=$'\033[35m'
+    C_GREY=$'\033[90m'
+else
+    C_RESET=""
+    C_DIM=""
+    C_BOLD=""
+    C_GREEN=""
+    C_YELLOW=""
+    C_RED=""
+    C_CYAN=""
+    C_BLUE=""
+    C_MAG=""
+    C_GREY=""
 fi
 
-unset _d _SCRIPT_DIR _PREFIX_DIR
+# pct_color <integer-percent>
+# Prints the ANSI escape for green/yellow/red based on load level.
+pct_color() {
+    local pct=${1:-0}
+    if [[ ! "$pct" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$C_GREY"
+        return
+    fi
+    if   (( pct < 60 )); then printf '%s' "$C_GREEN"
+    elif (( pct < 85 )); then printf '%s' "$C_YELLOW"
+    else                       printf '%s' "$C_RED"
+    fi
+}
+# render.sh — gradient bars, row builder, human-readable sizes
+# Part of statd: https://github.com/Jaseunda/statd
+#
+# Performance notes:
+#   human()        — pure bash integer math, zero forks
+#   bar_gradient() — pure bash loop, no seq fork
+#   All other functions are fork-free
 
-# Source order matters: platform libs first, then the dispatcher layer.
-# shellcheck source=lib/colors.sh
-source "$_LIB_DIR/colors.sh"
-# shellcheck source=lib/render.sh
-source "$_LIB_DIR/render.sh"
-# shellcheck source=lib/sensors_linux.sh
-source "$_LIB_DIR/sensors_linux.sh"
-# shellcheck source=lib/sensors_macos.sh
-source "$_LIB_DIR/sensors_macos.sh"
-# shellcheck source=lib/sensors.sh
-source "$_LIB_DIR/sensors.sh"
-# shellcheck source=lib/llm.sh
-source "$_LIB_DIR/llm.sh"
+# Pre-built empty-bar string (enough for any realistic BAR_WIDTH).
+# Substring slice is faster than any loop or seq call.
+_STATD_EMPTY='░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░'
 
-unset _LIB_DIR
-# END LIB LOADER
+# Internal: map a 0-255 color channel to a 0-5 xterm-256 cube index.
+bar_grad_level() {
+    printf '%d' $(( (${1:-0} * 5 + 127) / 255 ))
+}
+
+# bar_gradient <pct> [width] [mode]
+# Prints a filled gradient bar. No external process forks.
+# mode: "load" (green->yellow->red)   "mag" (purple->blue)
+bar_gradient() {
+    local pct=$1 width=${2:-$BAR_WIDTH} mode=${3:-load}
+    [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+    (( pct <   0 )) && pct=0
+    (( pct > 100 )) && pct=100
+    (( width < 1 )) && width=1
+
+    local filled=$(( pct * width / 100 ))
+    local empty=$(( width - filled ))
+    local denom=$(( width > 1 ? width - 1 : 1 ))
+
+    local i t r g b rl gl bl idx tt
+    for (( i=0; i<filled; i++ )); do
+        t=$(( i * 1000 / denom ))
+        if [ "$mode" = "mag" ]; then
+            r=$(( 220 + (140 - 220) * t / 1000 ))
+            g=$(( 130 + (0   - 130) * t / 1000 ))
+            b=$(( 255 + (180 - 255) * t / 1000 ))
+        else
+            if (( t <= 500 )); then
+                tt=$(( t * 2 ))
+                r=$(( (225 * tt) / 1000 ))
+                g=200
+                b=0
+            else
+                tt=$(( (t - 500) * 2 ))
+                r=225
+                g=$(( 200 + (40 - 200) * tt / 1000 ))
+                b=0
+            fi
+        fi
+        rl=$(bar_grad_level "$r")
+        gl=$(bar_grad_level "$g")
+        bl=$(bar_grad_level "$b")
+        idx=$(( 16 + 36*rl + 6*gl + bl ))
+        printf '\033[38;5;%dm\xe2\x96\x88' "$idx"
+    done
+
+    # Empty portion — substring of pre-built string, no fork
+    printf '%s' "$C_GREY"
+    (( empty > 0 )) && printf '%s' "${_STATD_EMPTY:0:$empty}"
+    printf '%s' "$C_RESET"
+}
+
+# core_cell <core-index> <pct>
+core_cell() {
+    local c=$1 pct=$2 bar col
+    bar=$(bar_gradient "$pct" "$CORE_BAR_W" load)
+    col=$(pct_color "$pct")
+    printf '%sc%d %s%s%3s%%%s' "$C_GREY" "$c" "$bar" "$col" "$pct" "$C_RESET"
+}
+
+row_start() { ROW_PLAIN=""; ROW_COLORED=""; }
+
+seg() {
+    local text="$1" color="$2"
+    ROW_PLAIN+="$text"
+    if [ -n "$color" ]; then
+        ROW_COLORED+="${color}${text}${C_RESET}"
+    else
+        ROW_COLORED+="$text"
+    fi
+}
+
+# human <bytes>
+# Pure bash integer arithmetic — no awk fork.
+# Matches original output format: %.2fG / %.1fM / %.1fK / B
+human() {
+    local n=${1:-0} i f
+    if   (( n >= 1073741824 )); then
+        i=$(( n / 1073741824 ))
+        f=$(( (n % 1073741824) * 100 / 1073741824 ))
+        printf '%d.%02dG' "$i" "$f"
+    elif (( n >= 1048576 )); then
+        i=$(( n / 1048576 ))
+        f=$(( (n % 1048576) * 10 / 1048576 ))
+        printf '%d.%dM' "$i" "$f"
+    elif (( n >= 1024 )); then
+        i=$(( n / 1024 ))
+        f=$(( (n % 1024) * 10 / 1024 ))
+        printf '%d.%dK' "$i" "$f"
+    else
+        printf '%dB' "$n"
+    fi
+}
+# sensors_linux.sh — sensor implementations for Linux (x86, ARM, and other kernels)
+# Part of statd: https://github.com/Jaseunda/statd
+#
+# Performance notes:
+#   All functions use read builtins or direct file access where possible.
+#   awk is retained only for multi-file glob operations (cpuidle).
+#   No unnecessary subshells in the hot path.
+
+_linux_get_temp() {
+    local max=0 temp c type f
+    for f in /sys/class/thermal/thermal_zone*/temp; do
+        [ -r "$f" ] || continue
+        local typefile="${f%temp}type"
+        [ -r "$typefile" ] || continue
+        read -r type < "$typefile" 2>/dev/null
+        case "$type" in
+            cpu-0-*-usr|cpu-0-*-step|cpu-1-*-usr|cpu-1-*-step|\
+            x86_pkg_temp|acpitz|coretemp|cpu_thermal|soc_thermal|\
+            tsens_tz_sensor*|thermal)
+                read -r temp < "$f" 2>/dev/null
+                [[ "$temp" =~ ^[0-9]+$ ]] || continue
+                c=$(( temp / 1000 ))
+                (( c >= 0 && c <= 120 && c > max )) && max=$c
+                ;;
+        esac
+    done
+    (( max > 0 )) && printf '%d' "$max" || printf '%s' '--'
+}
+
+_linux_get_cpu_freq() {
+    local max=0 value f i frac
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
+        [ -r "$f" ] || continue
+        read -r value < "$f" 2>/dev/null
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        (( value > max )) && max=$value
+    done
+    if (( max >= 1000000 )); then
+        i=$(( max / 1000000 ))
+        frac=$(( (max % 1000000) * 100 / 1000000 ))
+        printf '%d.%02dGHz' "$i" "$frac"
+    elif (( max > 0 )); then
+        printf '%dMHz' "$(( max / 1000 ))"
+    else
+        printf '%s' '--'
+    fi
+}
+
+# Returns: <total_jiffies> <idle_jiffies>
+# Uses read builtin directly on /proc/stat — zero forks.
+_linux_get_cpu_raw() {
+    local tag u n s i io irq sirq
+    read -r tag u n s i io irq sirq _ < /proc/stat 2>/dev/null
+    [[ "$tag" == "cpu" ]] || return
+    printf '%d %d' $(( u + n + s + i + io + irq + sirq )) $(( i + io ))
+}
+
+# Returns total CPU idle microseconds (sum across all cores and idle states).
+# awk retained here — glob expands to many files, single awk pass is faster
+# than a bash loop calling read on each file individually.
+_linux_get_idle_us() {
+    awk '{s+=$1} END{print s+0}' \
+        /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
+}
+
+# Returns "core_index idle_us" lines for per-core residency.
+_linux_get_core_idle() {
+    awk '
+        FNR==1 {
+            cpu=FILENAME
+            sub(/.*\/cpu/, "", cpu)
+            sub(/\/cpuidle.*/, "", cpu)
+        }
+        { idle[cpu] += $1 }
+        END { for (c in idle) printf "%d %d\n", c, idle[c]+0 }
+    ' /sys/devices/system/cpu/cpu*/cpuidle/state*/time 2>/dev/null
+}
+
+# Returns: <total_kB> <used_kB> <swap_total_kB> <swap_used_kB>
+# Uses while+read on /proc/meminfo — zero forks.
+_linux_get_memory() {
+    local key val unit
+    local total=0 available=0 swap_total=0 swap_free=0
+    while read -r key val unit; do
+        case "$key" in
+            MemTotal:)     total=$val ;;
+            MemAvailable:) available=$val ;;
+            SwapTotal:)    swap_total=$val ;;
+            SwapFree:)     swap_free=$val ;;
+        esac
+    done < /proc/meminfo
+    printf '%d %d %d %d\n' \
+        "$total" \
+        "$(( total - available ))" \
+        "$swap_total" \
+        "$(( swap_total - swap_free ))"
+}
+
+# Returns: <pct> <status-string>  or empty if no battery.
+_linux_get_battery() {
+    # upower (desktop Linux, most distributions)
+    if command -v upower >/dev/null 2>&1; then
+        local bat
+        bat=$(upower -e 2>/dev/null | grep -i battery | head -1)
+        if [ -n "$bat" ]; then
+            upower -i "$bat" 2>/dev/null | awk '
+                /percentage/ { gsub(/[^0-9]/,"",$2); pct=$2 }
+                /state/      { st=$2 }
+                END          { if (pct != "") printf "%s %s", pct, st }
+            '
+            return
+        fi
+    fi
+
+    # sysfs power_supply (embedded Linux ARM, single-board computers, etc.)
+    local ps_dir
+    for ps_dir in /sys/class/power_supply/BAT* \
+                  /sys/class/power_supply/battery \
+                  /sys/class/power_supply/bms; do
+        [ -r "$ps_dir/capacity" ] || continue
+        local pct status
+        read -r pct    < "$ps_dir/capacity" 2>/dev/null
+        read -r status < "$ps_dir/status"   2>/dev/null
+        [[ "$pct" =~ ^[0-9]+$ ]] && printf '%s %s' "$pct" "$status" && return
+    done
+
+    printf '%s' ''
+}
+
+# Returns: <L1> <L5> <L15> <running/total>
+# Uses read builtin directly — zero forks.
+_linux_get_loadavg() {
+    local l1 l5 l15 rt rest
+    read -r l1 l5 l15 rt rest < /proc/loadavg 2>/dev/null
+    printf '%s %s %s %s\n' "$l1" "$l5" "$l15" "$rt"
+}
+
+# Uses read builtin + pure bash math — zero forks.
+_linux_get_uptime() {
+    local raw _
+    read -r raw _ < /proc/uptime 2>/dev/null
+    if [[ "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        local s=${raw%%.*}   # integer seconds, no awk needed
+        local d=$(( s / 86400 ))
+        local h=$(( (s % 86400) / 3600 ))
+        local m=$(( (s % 3600) / 60 ))
+        if   (( d > 0 )); then printf '%dd %dh %dm' "$d" "$h" "$m"
+        elif (( h > 0 )); then printf '%dh %dm' "$h" "$m"
+        else                   printf '%dm' "$m"
+        fi
+        return
+    fi
+    _fallback_uptime
+}
+
+_linux_find_llama_pid() {
+    local d
+    for d in /proc/[0-9]*; do
+        [ -r "$d/cmdline" ] || continue
+        grep -aqE 'llama-(server|cli|run|bench)' "$d/cmdline" 2>/dev/null || continue
+        printf '%s' "${d##*/}"
+        return 0
+    done
+    return 1
+}
+
+# Returns: <ticks> <rss-pages>
+_linux_get_llama_proc_stats() {
+    local pid=$1
+    [ -r "/proc/$pid/stat" ] || return 1
+    local lstat rest L_UT L_ST L_RSS
+    read -r lstat < "/proc/$pid/stat" 2>/dev/null
+    rest="${lstat#*) }"
+    [[ "$rest" == "$lstat" ]] && return 1
+    read -r _ _ _ _ _ _ _ _ _ _ L_UT L_ST _ _ _ _ _ _ _ _ L_RSS <<< "$rest"
+    [[ "$L_UT" =~ ^[0-9]+$ && "$L_ST" =~ ^[0-9]+$ ]] || return 1
+    printf '%d %d' $(( L_UT + L_ST )) "$L_RSS"
+}
+# sensors_macos.sh — sensor implementations for macOS (Apple Silicon and Intel)
+# Part of statd: https://github.com/Jaseunda/statd
+#
+# Performance notes:
+#   _macos_get_cpu_raw() uses sysctl kern.cp_time (cumulative jiffies,
+#   same interface as Linux /proc/stat).  Returns in <5ms vs the ~500ms
+#   that `top -l 1` required previously.  This allows accurate delta-based
+#   CPU% and makes INTERVAL=1 a true 1-second cycle on macOS.
+#
+#   Static hardware values (total RAM, page size) are read once at source
+#   time and cached in _MACOS_MEM_TOTAL_BYTES / _MACOS_PAGE_BYTES.
+
+# ---- Static cache (read once at source time) ----
+_MACOS_MEM_TOTAL_BYTES=$(sysctl -n hw.memsize 2>/dev/null)
+[[ "$_MACOS_MEM_TOTAL_BYTES" =~ ^[0-9]+$ ]] || _MACOS_MEM_TOTAL_BYTES=0
+
+_MACOS_PAGE_BYTES=$(sysctl -n hw.pagesize 2>/dev/null)
+[[ "$_MACOS_PAGE_BYTES" =~ ^[0-9]+$ ]] || _MACOS_PAGE_BYTES=4096
+
+_macos_get_temp() {
+    # osx-cpu-temp: brew install osx-cpu-temp
+    if command -v osx-cpu-temp >/dev/null 2>&1; then
+        local t
+        t=$(osx-cpu-temp 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [[ "$t" =~ ^[0-9]+ ]]; then
+            printf '%d' "${t%%.*}"
+            return
+        fi
+    fi
+    printf '%s' '--'
+}
+
+_macos_get_cpu_freq() {
+    local freq i frac
+
+    # Apple Silicon: hw.perflevel0.maxfreq (Hz) — P-core max
+    freq=$(sysctl -n hw.perflevel0.maxfreq 2>/dev/null)
+    if [[ "$freq" =~ ^[0-9]+$ ]] && (( freq > 0 )); then
+        i=$(( freq / 1000000000 ))
+        frac=$(( (freq % 1000000000) * 100 / 1000000000 ))
+        printf '%d.%02dGHz' "$i" "$frac"
+        return
+    fi
+
+    # Intel: hw.cpufrequency (Hz)
+    freq=$(sysctl -n hw.cpufrequency 2>/dev/null)
+    if [[ "$freq" =~ ^[0-9]+$ ]] && (( freq > 0 )); then
+        i=$(( freq / 1000000000 ))
+        frac=$(( (freq % 1000000000) * 100 / 1000000000 ))
+        (( i > 0 )) && printf '%d.%02dGHz' "$i" "$frac" \
+                    || printf '%dMHz' "$(( freq / 1000000 ))"
+        return
+    fi
+
+    printf '%s' '--'
+}
+
+# Returns: <total_jiffies> <idle_jiffies>
+#
+# kern.cp_time gives cumulative CPU ticks in the same layout as Linux
+# /proc/stat's "cpu" line: user nice sys idle intr
+#
+# This replaces the old `top -l 1` approach which blocked for ~500ms.
+# sysctl returns in <5ms, making macOS CPU% delta-based and accurate.
+_macos_get_cpu_raw() {
+    local u n s i intr
+    read -r u n s i intr <<< "$(sysctl -n kern.cp_time 2>/dev/null)"
+    [[ "$u" =~ ^[0-9]+$ ]] || return
+    printf '%d %d' $(( u + n + s + i + intr )) "$i"
+}
+
+# Returns: <total_kB> <used_kB> <swap_total_kB> <swap_used_kB>
+# Uses cached total RAM and page size — only vm_stat is called per tick.
+_macos_get_memory() {
+    local total_bytes=$_MACOS_MEM_TOTAL_BYTES
+    local ps=$_MACOS_PAGE_BYTES
+
+    local active=0 wired=0 compressed=0 used_bytes
+    eval "$(vm_stat 2>/dev/null | awk -v ps="$ps" '
+        /Pages active:/               { gsub(/\./,"",$3); printf "active=%d\n",     $3*ps }
+        /Pages wired down:/           { gsub(/\./,"",$4); printf "wired=%d\n",      $4*ps }
+        /Pages occupied by compressor:/ { gsub(/\./,"",$5); printf "compressed=%d\n", $5*ps }
+    ')"
+    used_bytes=$(( active + wired + compressed ))
+    (( used_bytes > total_bytes )) && used_bytes=$total_bytes
+
+    local swap_line swap_total_bytes=0 swap_used_bytes=0
+    swap_line=$(sysctl vm.swapusage 2>/dev/null)
+    swap_total_bytes=$(printf '%s' "$swap_line" | awk '
+        match($0,/total = ([0-9]+\.[0-9]+)([KMGT])/,a) {
+            v=a[1]; u=a[2]
+            if      (u=="K") v*=1024
+            else if (u=="M") v*=1048576
+            else if (u=="G") v*=1073741824
+            printf "%d", v
+        }')
+    swap_used_bytes=$(printf '%s' "$swap_line" | awk '
+        match($0,/used = ([0-9]+\.[0-9]+)([KMGT])/,a) {
+            v=a[1]; u=a[2]
+            if      (u=="K") v*=1024
+            else if (u=="M") v*=1048576
+            else if (u=="G") v*=1073741824
+            printf "%d", v
+        }')
+    [[ "$swap_total_bytes" =~ ^[0-9]+$ ]] || swap_total_bytes=0
+    [[ "$swap_used_bytes"  =~ ^[0-9]+$ ]] || swap_used_bytes=0
+
+    printf '%d %d %d %d\n' \
+        $(( total_bytes      / 1024 )) \
+        $(( used_bytes       / 1024 )) \
+        $(( swap_total_bytes / 1024 )) \
+        $(( swap_used_bytes  / 1024 ))
+}
+
+# Returns: <pct> <status-string>  or empty if no battery.
+_macos_get_battery() {
+    local line pct status
+    line=$(pmset -g batt 2>/dev/null | grep -E '[0-9]+%')
+    pct=$(printf '%s' "$line" | grep -oE '[0-9]+%' | tr -d '%' | head -1)
+    status=$(printf '%s' "$line" | awk -F';' '{sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2}')
+    [[ "$pct" =~ ^[0-9]+$ ]] && printf '%s %s' "$pct" "$status" || printf '%s' ''
+}
+
+# Returns: <L1> <L5> <L15> <running/total>
+_macos_get_loadavg() {
+    local l1 l5 l15 nproc
+    read -r l1 l5 l15 <<< "$(sysctl vm.loadavg 2>/dev/null | awk '{
+        for (i=1; i<=NF; i++)
+            if ($i ~ /^[0-9]+\.[0-9]+$/) { print $i, $(i+1), $(i+2); exit }
+    }')"
+    nproc=$(ps -A 2>/dev/null | awk 'END{print NR-1}')
+    [[ "$nproc" =~ ^[0-9]+$ ]] || nproc="?"
+    printf '%s %s %s 1/%s\n' "$l1" "$l5" "$l15" "$nproc"
+}
+
+_macos_get_uptime() {
+    local boot now elapsed s d h m
+    boot=$(sysctl -n kern.boottime 2>/dev/null | grep -oE 'sec = [0-9]+' | awk '{print $3}')
+    now=$(date +%s)
+    if [[ "$boot" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]]; then
+        elapsed=$(( now - boot ))
+        s=$elapsed
+        d=$(( s / 86400 )); h=$(( (s % 86400) / 3600 )); m=$(( (s % 3600) / 60 ))
+        if   (( d > 0 )); then printf '%dd %dh %dm' "$d" "$h" "$m"
+        elif (( h > 0 )); then printf '%dh %dm' "$h" "$m"
+        else                   printf '%dm' "$m"
+        fi
+        return
+    fi
+    _fallback_uptime
+}
+
+_macos_find_llama_pid() {
+    pgrep -f 'llama-(server|cli|run|bench)' 2>/dev/null | head -1
+}
+
+# Returns: <cpu_pct_integer> <rss_kB>
+_macos_get_llama_proc_stats() {
+    local pid=$1
+    ps -p "$pid" -o pcpu=,rss= 2>/dev/null | awk '{
+        cpu=$1; rss=$2
+        split(cpu,a,"."); if (a[2]+0 >= 5) a[1]++
+        printf "%d %d\n", a[1], rss
+    }'
+}
+# sensors.sh — OS detection, core count, sensor dispatchers
+# Part of statd: https://github.com/Jaseunda/statd
+#
+# This file must be sourced AFTER sensors_linux.sh and sensors_macos.sh.
+
+# ---- OS detection ----
+OS_TYPE="linux"
+case "$(uname -s)" in
+    Darwin) OS_TYPE="macos" ;;
+esac
+
+# ---- Logical CPU count ----
+if [ "$OS_TYPE" = "macos" ]; then
+    NCPU=$(sysctl -n hw.logicalcpu 2>/dev/null)
+else
+    NCPU=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
+fi
+[[ "$NCPU" =~ ^[0-9]+$ ]] || NCPU=1
+(( NCPU < 1 )) && NCPU=1
+
+# ---- Uptime fallback (parses `uptime` command output) ----
+_fallback_uptime() {
+    local ut mins
+    ut=$(uptime 2>/dev/null)
+    if [[ "$ut" =~ up[[:space:]]+([0-9]+)[[:space:]]+day[s]?,[[:space:]]*([0-9]+):([0-9]+) ]]; then
+        printf '%dd %dh %dm' \
+            "${BASH_REMATCH[1]}" \
+            "$((10#${BASH_REMATCH[2]}))" \
+            "$((10#${BASH_REMATCH[3]}))"
+    elif [[ "$ut" =~ up[[:space:]]+([0-9]+):([0-9]+) ]]; then
+        printf '%dh %dm' \
+            "$((10#${BASH_REMATCH[1]}))" \
+            "$((10#${BASH_REMATCH[2]}))"
+    elif [[ "$ut" =~ up[[:space:]]+([0-9]+)[[:space:]]+min ]]; then
+        mins=${BASH_REMATCH[1]}
+        printf '%dh %dm' $(( mins / 60 )) $(( mins % 60 ))
+    else
+        printf '%s' '--'
+    fi
+}
+
+# ---- Dispatchers ----
+
+get_temp() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_temp || _linux_get_temp
+}
+
+get_cpu_freq() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_cpu_freq || _linux_get_cpu_freq
+}
+
+# Returns: <total> <idle>  (jiffies on Linux, tenths-of-percent on macOS)
+get_cpu_raw() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_cpu_raw || _linux_get_cpu_raw
+}
+
+# Returns total idle microseconds across all cores (Linux only).
+get_idle_us() {
+    [ "$OS_TYPE" = "linux" ] && _linux_get_idle_us || printf '0'
+}
+
+# Returns "core idle_us" lines (Linux only; macOS yields nothing).
+get_core_idle() {
+    [ "$OS_TYPE" = "linux" ] && _linux_get_core_idle || true
+}
+
+# Returns: <total_kB> <used_kB> <swap_total_kB> <swap_used_kB>
+get_memory() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_memory || _linux_get_memory
+}
+
+# Returns: <pct> <status>  or empty string if no battery detected.
+get_battery() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_battery || _linux_get_battery
+}
+
+# Returns: <L1> <L5> <L15> <running/total>
+get_loadavg() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_loadavg || _linux_get_loadavg
+}
+
+get_uptime() {
+    [ "$OS_TYPE" = "macos" ] && _macos_get_uptime || _linux_get_uptime
+}
+
+# Returns: <total_bytes> <used_bytes>  for $HOME filesystem.
+get_disk() {
+    df -k "$HOME" 2>/dev/null | awk 'NR==2 { printf "%.0f %.0f\n", $2*1024, $3*1024 }'
+}
+
+# find_llama_pid — returns PID of a running llama process, or empty.
+find_llama_pid() {
+    [ "$OS_TYPE" = "macos" ] && _macos_find_llama_pid || _linux_find_llama_pid
+}
+
+# get_llama_proc_stats <pid>
+# Returns: <ticks_or_cpu_pct> <rss>
+# Linux: ticks (from /proc/pid/stat), rss in pages
+# macOS: cpu_pct (integer), rss in kB
+get_llama_proc_stats() {
+    local pid=$1
+    [ "$OS_TYPE" = "macos" ] && _macos_get_llama_proc_stats "$pid" \
+                              || _linux_get_llama_proc_stats "$pid"
+}
+# llm.sh — llama.cpp process and metrics monitoring helpers
+# Part of statd: https://github.com/Jaseunda/statd
+
+# get_llama_metrics
+# Fetches the Prometheus /metrics endpoint from a running llama-server.
+# Returns the raw text body, or nothing on failure.
+get_llama_metrics() {
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -s --max-time 0.5 "http://127.0.0.1:${LLM_PORT}/metrics" 2>/dev/null
+}
+
+# llama_pid_alive <pid>
+# Returns 0 if the given PID is still a llama process, 1 otherwise.
+llama_pid_alive() {
+    local pid=$1
+    [ -z "$pid" ] && return 1
+    if [ "$OS_TYPE" = "linux" ]; then
+        [ -r "/proc/$pid/cmdline" ] || return 1
+        grep -aqE 'llama-(server|cli|run|bench)' "/proc/$pid/cmdline" 2>/dev/null
+    else
+        kill -0 "$pid" 2>/dev/null
+    fi
+}
+# --- End of Inlined Libraries ---
 
 # ------------------------------------------------------------
 # Configuration (all overridable via environment)

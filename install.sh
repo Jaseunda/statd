@@ -12,6 +12,22 @@
 #   BRANCH=main       Branch to install from
 
 BRANCH="${BRANCH:-main}"
+IS_UPDATE_MODE=0
+AUTO_YES=0
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --prefix=*) PREFIX="${1#*=}"; shift ;;
+        --prefix)   PREFIX="$2"; shift 2 ;;
+        --branch=*) BRANCH="${1#*=}"; shift ;;
+        --branch)   BRANCH="$2"; shift 2 ;;
+        -u|--update|update) IS_UPDATE_MODE=1; shift ;;
+        -y|--yes)   AUTO_YES=1; shift ;;
+        *) shift ;;
+    esac
+done
+
 REPO_RAW="https://raw.githubusercontent.com/Jaseunda/statd/${BRANCH}"
 INSTALLER_URL="${REPO_RAW}/install.sh"
 ARCHIVE_URL="https://github.com/Jaseunda/statd/archive/refs/heads/${BRANCH}.tar.gz"
@@ -28,8 +44,21 @@ BINDIR="$PREFIX/bin"
 LIBDIR="$PREFIX/lib/statd"
 
 # ---- Terminal output helpers ----
-_tty()  { printf '%s' "$*" > /dev/tty; }
-_ttyn() { printf '%s\n' "$*" > /dev/tty; }
+_tty() {
+    if [ -w /dev/tty ] && [ -r /dev/tty ]; then
+        printf '%b' "$*" > /dev/tty 2>/dev/null || printf '%b' "$*"
+    else
+        printf '%b' "$*"
+    fi
+}
+
+_ttyn() {
+    if [ -w /dev/tty ] && [ -r /dev/tty ]; then
+        printf '%b\n' "$*" > /dev/tty 2>/dev/null || printf '%b\n' "$*"
+    else
+        printf '%b\n' "$*"
+    fi
+}
 
 _header() {
     _ttyn ""
@@ -38,7 +67,7 @@ _header() {
     _ttyn ""
 }
 
-step()  { _ttyn "\n\033[1m  $*\033[0m"; }
+step()  { _ttyn ""; _ttyn "  \033[1m$*\033[0m"; }
 info()  { _ttyn "  \033[32m+\033[0m  $*"; }
 warn()  { _ttyn "  \033[33m!\033[0m  $*"; }
 error() { _ttyn "  \033[31mx\033[0m  $*"; exit 1; }
@@ -47,12 +76,18 @@ error() { _ttyn "  \033[31mx\033[0m  $*"; exit 1; }
 # Returns 0 for yes, 1 for no.
 ask() {
     local prompt="$1" default="${2:-y}" response
-    if [ "$default" = "y" ]; then
-        printf '  \033[1m?\033[0m  %s [Y/n] ' "$prompt" > /dev/tty
-    else
-        printf '  \033[1m?\033[0m  %s [y/N] ' "$prompt" > /dev/tty
+    if [ "$AUTO_YES" = "1" ]; then
+        return 0
     fi
-    read -r response < /dev/tty || response="$default"
+    if [ ! -r /dev/tty ]; then
+        return 0
+    fi
+    if [ "$default" = "y" ]; then
+        _tty "  \033[1m?\033[0m  %s [Y/n] " "$prompt"
+    else
+        _tty "  \033[1m?\033[0m  %s [y/N] " "$prompt"
+    fi
+    read -r response < /dev/tty 2>/dev/null || response="$default"
     response="${response:-$default}"
     case "$response" in
         [Yy]|[Yy][Ee][Ss]) return 0 ;;
@@ -88,7 +123,7 @@ _reexec_with() {
         fi
     fi
 
-    exec env PREFIX="$PREFIX" BRANCH="$BRANCH" "$new_bash" "$script_file"
+    exec env PREFIX="$PREFIX" BRANCH="$BRANCH" "$new_bash" "$script_file" "$@"
 }
 
 # ---- Main ----
@@ -142,8 +177,8 @@ else
 
     if [ -n "$BREW_BASH" ]; then
         _bver=$("$BREW_BASH" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        info "Found Bash $BVER at $BREW_BASH — re-running installer"
-        _reexec_with "$BREW_BASH"
+        info "Found Bash $_bver at $BREW_BASH — re-running installer"
+        _reexec_with "$BREW_BASH" "$@"
         # exec above never returns
     fi
 
@@ -244,9 +279,19 @@ do
 done
 
 # ============================================================
-# Step 5 — Install
+# Step 5 — Install / Update
 # ============================================================
-step "Installing to $PREFIX"
+IS_UPDATE=0
+if [ -f "$BINDIR/statd" ]; then
+    IS_UPDATE=1
+fi
+
+if [ "$IS_UPDATE" = "1" ] || [ "$IS_UPDATE_MODE" = "1" ]; then
+    step "Updating statd in $PREFIX"
+    info "Existing binary found at $BINDIR/statd"
+else
+    step "Installing to $PREFIX"
+fi
 
 mkdir -p "$BINDIR" "$LIBDIR" \
     || error "Cannot create $BINDIR or $LIBDIR. Try: PREFIX=~/.local bash install.sh"
@@ -279,7 +324,11 @@ fi
 # Done
 # ============================================================
 _ttyn ""
-_ttyn "  \033[1;32mInstalled.\033[0m"
+if [ "$IS_UPDATE" = "1" ]; then
+    _ttyn "  \033[1;32mstatd updated successfully.\033[0m"
+else
+    _ttyn "  \033[1;32mstatd installed successfully.\033[0m"
+fi
 _ttyn ""
 
 if [ "$IN_PATH" = "0" ]; then
@@ -301,4 +350,5 @@ _ttyn ""
 _ttyn "    statd"
 _ttyn ""
 _ttyn "  Keys:  c = toggle per-core panel   q = quit"
+_ttyn "  Update anytime with: statd --update"
 _ttyn ""

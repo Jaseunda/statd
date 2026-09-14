@@ -118,7 +118,7 @@ _macos_get_battery() {
     local line pct status
     line=$(pmset -g batt 2>/dev/null | grep -E '[0-9]+%')
     pct=$(printf '%s' "$line" | grep -oE '[0-9]+%' | tr -d '%' | head -1)
-    status=$(printf '%s' "$line" | awk -F';' '{gsub(/ /,"",$2); print $2}')
+    status=$(printf '%s' "$line" | awk -F';' '{sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2}')
     [[ "$pct" =~ ^[0-9]+$ ]] && printf '%s %s' "$pct" "$status" || printf '%s' ''
 }
 

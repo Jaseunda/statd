@@ -47,13 +47,58 @@ macOS requires Bash 4.0+. The system ships 3.2:
 brew install bash
 ```
 
+## Update
+
+Update statd to the latest version at any time:
+
+```sh
+statd --update
+```
+
+Check for updates without installing:
+
+```sh
+statd --check-update
+```
+
+If managing from source:
+
+```sh
+make update
+```
+
 ## Run
 
 ```sh
 statd
 ```
 
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-u, --update` | Check for and install the latest update |
+| `--check-update` | Check if an update is available without installing |
+| `-c, --cores` | Start with the per-core CPU panel visible |
+| `-i, --interval <sec>` | Refresh interval in seconds (default: 1) |
+| `-v, --version` | Show version information |
+| `-h, --help` | Show help and options |
+
 Press `c` to toggle the per-core panel. Press `q` to quit.
+
+## Light Setups & Zero-Install
+
+For minimal containers (Docker, Podman, LXC), microVMs, or ephemeral remote hosts where installing libraries isn't desired, use the standalone single-file bundle:
+
+```sh
+# Generate bundle (produces dist/statd)
+make bundle
+
+# Or run directly without installing
+curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | bash
+```
+
+The standalone script has all modular sensors embedded in a single file with zero external dependencies beyond standard bash and POSIX utilities.
 
 ## Configuration
 
