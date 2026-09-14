@@ -13,8 +13,65 @@ To maintain maximum performance and reliability, we follow a set of conventions 
 - [ ] Run `make check` — all files must pass bash syntax checks.
 - [ ] Run `./bundle.sh` if modifying `statd` or any files in `lib/`.
 - [ ] Keep the **hot path fork-free** (the 1-second display loop should never spawn unnecessary subprocesses).
+- [ ] Determine whether your change belongs in **Core** or as a **Plugin** (see guide below).
 - [ ] Format your commit messages using **Conventional Commits**.
 - [ ] Test on your target platform and note the environment in the PR.
+
+---
+
+## Decision Guide: Built-in (Core) vs. Plugin
+
+StatD's guiding principle is to be **bloat-free, sub-millisecond fast, and zero-dependency**.
+To keep the core binary ultra-lean, use this guide to decide whether your contribution belongs in **Core** or as an optional **Plugin**:
+
+```
+                              Is the metric universal to
+                               almost all Linux / macOS
+                                systems without extras?
+                                     /          \
+                                  [YES]        [NO]
+                                   /              \
+                   Does it read directly          Does it require specialized
+                   from kernel /proc /sys?        tools (e.g. pvesm, zpool, docker)?
+                         /        \                      \
+                      [YES]      [NO]                    [YES]
+                       /            \                      \
+               ┌─────────────┐   ┌───────────────────────────────┐
+               │    CORE     │   │            PLUGIN             │
+               │  (lib/ +    │   │      (plugins/<name>/)        │
+               │   statd)    │   │  Optional install on demand   │
+               └─────────────┘   └───────────────────────────────┘
+```
+
+### 🟢 When it belongs in Core (Built-in)
+
+Add your changes to `lib/` and `statd` if:
+1. **Universal Relevance**: It applies to virtually all standard machines (e.g. CPU, RAM, Swap, root filesystem, system load, platform temperature, laptop battery).
+2. **Kernel-Native & Zero Overhead**: The data is readable directly from `/proc`, `/sys`, `sysctl`, or `ioreg` with pure Bash built-ins.
+3. **Zero External Packages**: It does not depend on external CLI packages (`pvesm`, `zfs`, `docker`, `kubectl`) that are absent on minimal systems.
+4. **Sub-Millisecond Execution**: Reading and parsing takes < 1ms on each cycle.
+
+### 🟣 When it belongs as a Plugin (`plugins/<name>`)
+
+Create a new directory in `plugins/<name>/` if:
+1. **Specialized Hypervisors & Filesystems**:
+   - Proxmox VE storage (`pvesm status`), multi-drive ZFS pool monitors (`zpool list`), Ceph, or Btrfs pool status.
+   - Container & VM engines (Docker, Podman, LXC, Kubernetes).
+2. **Daemon & Service Monitoring**:
+   - Web servers (Nginx/Apache), databases (Postgres, Redis), UPS daemons (`apcupsd`, `nut`), or specific AI endpoints (Ollama, vLLM).
+3. **Requires Optional External Binaries**:
+   - The feature relies on commands or utilities that the user must explicitly install or configure.
+4. **Extended UI / Tooling / Exporting**:
+   - Interactive configuration tools (like `statd-theme`) or HTTP/JSON streaming services (like `statd-api`).
+5. **Higher Latency Polling**:
+   - Commands that take tens or hundreds of milliseconds to query, or perform non-cached disk I/O.
+
+### How Plugins Work
+
+Plugins live in `plugins/<plugin-name>/` and follow a standard structure:
+- `plugins/<name>/statd-<name>` — Executable bash script (must define `VERSION="..."` and handle `-v` / `--help`).
+- `plugins/<name>/README.md` — Usage guide and installation instructions.
+- Users install plugins on demand with `statd install <name>`, and update them with `statd plugin update <name>` or via the one-click menu in `statd about`.
 
 ---
 

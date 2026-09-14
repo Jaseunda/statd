@@ -6,6 +6,11 @@
 
 <!-- Explain why this change is needed. If this fixes an open issue or adds support for specific environments (e.g. Proxmox VE, ZFS, multi-core servers, macOS, Termux), mention it here. -->
 
+## Classification
+
+- [ ] **Core / Built-in** (`lib/` or `statd`): Universal metric, zero external CLI dependencies, reads directly from kernel (`/proc`, `sysctl`).
+- [ ] **Plugin** (`plugins/<name>/`): Specialized hypervisor, filesystem, daemon, or tool (e.g. Proxmox `pvesm`, ZFS pools, Docker, themes).
+
 ## Type of Change
 
 - [ ] `feat`: New feature, sensor, or theme
