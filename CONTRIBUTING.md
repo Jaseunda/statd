@@ -24,23 +24,22 @@ To maintain maximum performance and reliability, we follow a set of conventions 
 StatD's guiding principle is to be **bloat-free, sub-millisecond fast, and zero-dependency**.
 To keep the core binary ultra-lean, use this guide to decide whether your contribution belongs in **Core** or as an optional **Plugin**:
 
-```
-                              Is the metric universal to
-                               almost all Linux / macOS
-                                systems without extras?
-                                     /          \
-                                  [YES]        [NO]
-                                   /              \
-                   Does it read directly          Does it require specialized
-                   from kernel /proc /sys?        tools (e.g. pvesm, zpool, docker)?
-                         /        \                      \
-                      [YES]      [NO]                    [YES]
-                       /            \                      \
-               ┌─────────────┐   ┌───────────────────────────────┐
-               │    CORE     │   │            PLUGIN             │
-               │  (lib/ +    │   │      (plugins/<name>/)        │
-               │   statd)    │   │  Optional install on demand   │
-               └─────────────┘   └───────────────────────────────┘
+```mermaid
+flowchart TD
+    Start(["New Feature or Sensor Idea"]) --> Q1{"Is it universal to almost all<br/>standard Linux & macOS systems?"}
+
+    Q1 -- Yes --> Q2{"Can it be read directly from the kernel<br/>(/proc, /sys, sysctl, ioreg)<br/>using pure Bash built-ins?"}
+    Q1 -- No --> Plugin["🟣 PLUGIN<br/>(plugins/&lt;name&gt;/)<br/>• Optional install on demand<br/>• Keeps core bloat-free"]
+
+    Q2 -- Yes --> Q3{"Does it execute in &lt; 1ms<br/>with zero external packages?"}
+    Q2 -- No --> Plugin
+
+    Q3 -- Yes --> Core["🟢 CORE BUILT-IN<br/>(lib/ + statd)<br/>• Universal system HUD<br/>• Zero-fork hot path"]
+    Q3 -- No --> Plugin
+
+    style Core fill:#134e4a,stroke:#2dd4bf,stroke-width:2px,color:#ccfbf1
+    style Plugin fill:#3b0764,stroke:#c084fc,stroke-width:2px,color:#f3e8ff
+    style Start fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#f8fafc
 ```
 
 ### 🟢 When it belongs in Core (Built-in)
