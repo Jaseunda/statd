@@ -192,3 +192,30 @@ _macos_get_llama_proc_stats() {
         printf "%d %d\n", a[1], rss
     }'
 }
+
+# Returns: <util_pct> <mem_used_bytes> <mem_total_bytes> <temp_celsius> <model_name>
+_macos_get_gpu() {
+    local out util mem model
+    out=$(ioreg -r -d 1 -c IOAccelerator 2>/dev/null)
+    [[ -z "$out" ]] && return 1
+
+    if [[ "$out" =~ \"Device\ Utilization\ %\"=([0-9]+) ]]; then
+        util="${BASH_REMATCH[1]}"
+    elif [[ "$out" =~ \"Renderer\ Utilization\ %\"=([0-9]+) ]]; then
+        util="${BASH_REMATCH[1]}"
+    fi
+
+    if [[ "$out" =~ \"In\ use\ system\ memory\"=([0-9]+) ]]; then
+        mem="${BASH_REMATCH[1]}"
+    fi
+
+    if [[ "$out" =~ \"model\"\ =\ \"([^\"]+)\" ]]; then
+        model="${BASH_REMATCH[1]}"
+    fi
+
+    if [[ -n "$util" ]]; then
+        printf '%d %s 0 -- %s\n' "$util" "${mem:-0}" "${model:-Apple GPU}"
+        return 0
+    fi
+    return 1
+}

@@ -38,6 +38,7 @@ While running, you can press any of these keys anytime:
 |-----|--------|
 | `f` / `w` | Toggle full-width stretch (edge-to-edge) |
 | `c` | Toggle per-core CPU panel |
+| `g` | Toggle GPU (`GPU`) |
 | `l` | Toggle Load average (`LD`) |
 | `b` | Toggle Battery (`BAT`) |
 | `s` | Toggle Swap (`SWP`) |
@@ -49,14 +50,16 @@ While running, you can press any of these keys anytime:
 Turn off views you don't need with the `config` command:
 
 ```sh
-# Turn off load average (LD)
+# Turn off load average (LD) or GPU
 statd config disable ld
+statd config disable gpu
 
 # Turn off battery (BAT)
 statd config disable bat
 
 # Turn any view back on
 statd config enable ld
+statd config enable gpu
 statd config enable bat
 
 # See your current settings
@@ -66,6 +69,7 @@ statd config
 You can also hide views on the fly with command-line flags:
 
 ```sh
+statd --no-gpu          # Run without GPU row
 statd --no-ld           # Run without load average
 statd --no-bat          # Run without battery
 statd --no-ld --no-bat  # Run without load average or battery
@@ -143,6 +147,9 @@ curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | ba
 | `-u, --update` | Update statd to latest version |
 | `--check-update` | Check for updates |
 | `--config [cmd]` | Manage view toggles (`statd config`) |
+| `--no-cpu` | Hide CPU row |
+| `--no-gpu` | Hide GPU row |
+| `--no-ram` | Hide RAM row |
 | `--no-ld` | Hide load average row |
 | `--no-bat` | Hide battery row |
 | `--no-swp` | Hide swap row |

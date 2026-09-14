@@ -188,3 +188,52 @@ _linux_get_llama_proc_stats() {
     [[ "$L_UT" =~ ^[0-9]+$ && "$L_ST" =~ ^[0-9]+$ ]] || return 1
     printf '%d %d' $(( L_UT + L_ST )) "$L_RSS"
 }
+
+# Returns: <util_pct> <mem_used_bytes> <mem_total_bytes> <temp_celsius> <model_name>
+_linux_get_gpu() {
+    # 1. NVIDIA via nvidia-smi
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        local n_out
+        n_out=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name --format=csv,noheader,nounits 2>/dev/null | head -1)
+        if [ -n "$n_out" ]; then
+            local u mu mt tp nm
+            IFS=',' read -r u mu mt tp nm <<< "$n_out"
+            u="${u// /}"
+            mu="${mu// /}"
+            mt="${mt// /}"
+            tp="${tp// /}"
+            nm="${nm#"${nm%%[![:space:]]*}"}"
+            nm="${nm%"${nm##*[![:space:]]}"}"
+            if [[ "$u" =~ ^[0-9]+$ ]]; then
+                local b_used=$(( mu * 1048576 ))
+                local b_tot=$(( mt * 1048576 ))
+                printf '%d %s %s %s %s\n' "$u" "$b_used" "$b_tot" "${tp:---}" "${nm:-NVIDIA}"
+                return 0
+            fi
+        fi
+    fi
+
+    # 2. AMD via sysfs (zero forks)
+    local card
+    for card in /sys/class/drm/card[0-9]/device; do
+        if [ -f "$card/gpu_busy_percent" ]; then
+            local u b_used=0 b_tot=0 tp="--" nm="AMD GPU"
+            if { read -r u < "$card/gpu_busy_percent"; } 2>/dev/null && [[ "$u" =~ ^[0-9]+$ ]]; then
+                [ -f "$card/mem_info_vram_used" ] && { read -r b_used < "$card/mem_info_vram_used"; } 2>/dev/null
+                [ -f "$card/mem_info_vram_total" ] && { read -r b_tot < "$card/mem_info_vram_total"; } 2>/dev/null
+                local tfile raw_t
+                for tfile in "$card"/hwmon/hwmon*/temp1_input; do
+                    if [ -f "$tfile" ] && { read -r raw_t < "$tfile"; } 2>/dev/null && [[ "$raw_t" =~ ^[0-9]+$ ]]; then
+                        tp=$(( raw_t / 1000 ))
+                        break
+                    fi
+                done
+                [ -f "$card/product_name" ] && { read -r nm < "$card/product_name"; } 2>/dev/null
+                printf '%d %s %s %s %s\n' "$u" "${b_used:-0}" "${b_tot:-0}" "$tp" "$nm"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}

@@ -41,6 +41,7 @@ else
     get_memory() { printf '%d %d %d %d' 0 0 0 0; }
     get_disk() { printf '%d %d' 0 0; }
     get_battery() { printf '%s' ''; }
+    get_gpu() { printf '%s' ''; }
     get_loadavg() { printf '%s %s %s %s' '--' '--' '--' '--'; }
     get_uptime() { uptime 2>/dev/null || printf '%s' '--'; }
 fi
@@ -139,6 +140,10 @@ get_json_snapshot() {
         cpu_pct="${c_idl:-0}"
     fi
 
+    local gpu_pct='' gpu_used=0 gpu_total=0 gpu_temp='--' gpu_model=''
+    read -r gpu_pct gpu_used gpu_total gpu_temp gpu_model <<< "$(get_gpu)"
+    gpu_model="${gpu_model//\"/\\\"}"
+
     # Escape strings safely for JSON
     bat_status="${bat_status//\"/\\\"}"
     uptime_s="${uptime_s//\"/\\\"}"
@@ -151,6 +156,18 @@ get_json_snapshot() {
     printf '    "freq": "%s",\n' "$cpu_freq"
     printf '    "temp": "%s",\n' "$temp_c"
     printf '    "cores": %s\n' "${NCPU:-1}"
+    printf '  },\n'
+    printf '  "gpu": {\n'
+    if [[ "$gpu_pct" =~ ^[0-9]+$ ]]; then
+        printf '    "present": true,\n'
+        printf '    "percent": %s,\n' "$gpu_pct"
+        printf '    "memory_used_bytes": %s,\n' "${gpu_used:-0}"
+        printf '    "memory_total_bytes": %s,\n' "${gpu_total:-0}"
+        printf '    "temp": "%s",\n' "${gpu_temp:---}"
+        printf '    "model": "%s"\n' "$gpu_model"
+    else
+        printf '    "present": false\n'
+    fi
     printf '  },\n'
     printf '  "memory": {\n'
     printf '    "total_bytes": %s,\n' "$mem_total_b"

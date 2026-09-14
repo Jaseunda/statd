@@ -50,6 +50,11 @@ get_cpu_freq() {
     if [ "$OS_TYPE" = "macos" ]; then _macos_get_cpu_freq; else _linux_get_cpu_freq; fi
 }
 
+# Returns: <util_pct> <mem_used_bytes> <mem_total_bytes> <temp_celsius> <model_name>
+get_gpu() {
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_gpu; else _linux_get_gpu; fi
+}
+
 # Returns: <total> <idle> (or PCT <val>)
 get_cpu_raw() {
     if [ "$OS_TYPE" = "macos" ]; then _macos_get_cpu_raw; else _linux_get_cpu_raw; fi
