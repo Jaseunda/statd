@@ -68,3 +68,9 @@ statd theme reset
 | `monokai` | Vibrant coding palette (Lime, Cyan, Magenta) |
 | `synthwave` | 80s retro neon aesthetic (Hot Pink, Neon Cyan) |
 | `stealth` | Monochrome minimal blackout (Slate, Silver, White) |
+| `glacier` | Crystalline arctic ice (Glacier, Frost, Deep Blue) |
+| `mocha` | Warm cozy espresso & caramel (Mocha, Honey, Amber) |
+| `amethyst` | Mystic royal gemstones (Violet, Orchid, Lavender) |
+| `flame` | Burning solar flare (Golden Blaze, Flame, Lava) |
+| `miami` | Sun-drenched South Beach Vice (Turquoise, Hot Pink, Gold) |
+| `matcha` | Zen Japanese tea garden (Matcha, Jade, Bamboo) |

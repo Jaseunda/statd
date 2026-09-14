@@ -155,6 +155,26 @@ bar_gradient() {
                     g=$(( 230 + (125 - 230) * t / 1000 ))
                     b=$(( 235 + (130 - 235) * t / 1000 ))
                     ;;
+                glacier|ice)
+                    r=$(( 160 + (30  - 160) * t / 1000 ))
+                    g=$(( 240 + (130 - 240) * t / 1000 ))
+                    b=$(( 255 + (240 - 255) * t / 1000 ))
+                    ;;
+                mocha|coffee)
+                    r=$(( 215 + (115 - 215) * t / 1000 ))
+                    g=$(( 160 + (65  - 160) * t / 1000 ))
+                    b=$(( 110 + (30  - 110) * t / 1000 ))
+                    ;;
+                amethyst|violet)
+                    r=$(( 210 + (110 - 210) * t / 1000 ))
+                    g=$(( 120 + (30  - 120) * t / 1000 ))
+                    b=$(( 255 + (210 - 255) * t / 1000 ))
+                    ;;
+                flame|blaze)
+                    r=$(( 255 + (240 - 255) * t / 1000 ))
+                    g=$(( 215 + (70  - 215) * t / 1000 ))
+                    b=0
+                    ;;
                 load|*)
                     if (( t <= 500 )); then
                         tt=$(( t * 2 ))
@@ -216,6 +236,12 @@ PRESET_THEMES=(
     "monokai|load|cyan|purple|mag|amber|load|Vibrant coding palette (Lime, Cyan, Magenta)"
     "synthwave|purple|cyan|mag|purple|cyan|mag|80s retro neon aesthetic (Hot Pink, Neon Cyan)"
     "stealth|stealth|nord|stealth|stealth|nord|stealth|Monochrome minimal blackout (Slate, Silver, White)"
+    "glacier|glacier|cyan|glacier|nord|ocean|glacier|Crystalline arctic ice (Glacier, Frost, Deep Blue)"
+    "mocha|mocha|amber|mocha|gold|gruvbox|mocha|Warm cozy espresso & caramel (Mocha, Honey, Amber)"
+    "amethyst|amethyst|rose|amethyst|purple|amethyst|rose|Mystic royal gemstones (Violet, Orchid, Lavender)"
+    "flame|flame|amber|lava|gold|flame|lava|Burning solar flare (Golden Blaze, Flame, Lava)"
+    "miami|cyan|rose|purple|mag|gold|cyan|Sun-drenched South Beach Vice (Turquoise, Hot Pink, Gold)"
+    "matcha|forest|emerald|forest|gold|matrix|emerald|Zen Japanese tea garden (Matcha, Jade, Bamboo)"
 )
 
 # Set variable in config file
@@ -246,10 +272,11 @@ Usage:
   statd theme set-color <metric> <color>
                                Customize a single metric color
                                Metrics: cpu, gpu, ram, swp, dsk, ld
-                               Colors:  cyan, amber, purple, matrix, nord, load, mag,
-                                        tokyo, gruvbox, forest, rose, ocean, emerald,
-                                        lava, gold, sakura, stealth
-                                        or custom RGB: R1,G1,B1:R2,G2,B2
+                                Colors:  cyan, amber, purple, matrix, nord, load, mag,
+                                         tokyo, gruvbox, forest, rose, ocean, emerald,
+                                         lava, gold, sakura, stealth, glacier, mocha,
+                                         amethyst, flame
+                                         or custom RGB: R1,G1,B1:R2,G2,B2
   statd theme create <name>    Create a custom theme
   statd theme update           Update the theme plugin to latest version
   statd theme reset            Restore default colors
@@ -747,7 +774,7 @@ interactive_picker() {
         # Live Preview Box
         IFS='|' read -r cur_name cur_cpu cur_gpu cur_ram cur_swp cur_dsk cur_ld cur_desc cur_type <<< "${items[cur_idx]}"
 
-        printf '\n\033[1;34m  ┌─ Live Preview: \033[1;37m%-12s\033[0;1;34m ─────────────────────────────────┐\033[0m\n' "$cur_name"
+        printf '\n\033[1;34m  ┌─ Live Preview: \033[1;37m%-12s\033[0;1;34m─────────────────────────────────┐\033[0m\n' "$cur_name"
 
         _render_picker_row "CPU" 52 "$cur_cpu"
         _render_picker_row "GPU" 74 "$cur_gpu"
