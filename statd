@@ -676,96 +676,126 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ------------------------------------------------------------
-# Easter Egg: Dance Party Animation (6 seconds)
+# Easter Egg: Dance Mode (6 seconds)
 # Triggered by pressing "\"
+# Dances the EXACT current display format with bouncing bars & cycling colors
 # ------------------------------------------------------------
 trigger_dance_party() {
-    local frame=0 total_frames=40
+    local total_frames=40
+    local frame=0
+
     local colors=(
-        "\033[1;31m"      # Red
-        "\033[38;5;208m"  # Neon Orange
+        "\033[1;36m"      # Cyan
+        "\033[1;35m"      # Magenta
         "\033[1;33m"      # Yellow
         "\033[1;32m"      # Green
-        "\033[38;5;51m"   # Neon Cyan
-        "\033[1;34m"      # Blue
+        "\033[38;5;208m"  # Neon Orange
         "\033[38;5;213m"  # Hot Pink
-        "\033[1;35m"      # Magenta
+        "\033[38;5;51m"   # Bright Cyan
         "\033[38;5;154m"  # Lime
     )
     local num_colors=${#colors[@]}
+    local party_modes=("cyan" "amber" "purple" "matrix" "nord" "mag" "load")
+    local num_modes=${#party_modes[@]}
 
-    local titles=(
-        "★ ★ ★   S T A T D   D I S C O   P A R T Y   ★ ★ ★"
-        "♫ ♫ ♫   D A N C I N G   W I T H   S T A T S   ♫ ♫ ♫"
-        "✦ ✦ ✦   E A S T E R   E G G   U N L O C K E D !   ✦ ✦ ✦"
-        "♥ ♥ ♥   F E E L   T H E   G R O O V E   ♥ ♥ ♥"
-        "⚡ ⚡ ⚡   U L T I M A T E   V I B E S   ⚡ ⚡ ⚡"
-    )
-    local num_titles=${#titles[@]}
+    local disco_icons=("♪" "♫" "♬" "✦" "★" "⚡")
 
-    local dancers_top=(
-        "♪┏(･o･)┛♪       (>'-')>      ٩(◕‿◕｡)۶      <('-'<)       ♪┗(･o･)┓♪"
-        "♪┗(･o･)┓♪       <('-'<)       (งツ)ว        (>'-')>       ♪┏(･o･)┛♪"
-        "♪┏(･o･)┛♪      ^(' - ')^     \\(^o^)/     v(' - ')v      ♪┗(･o･)┓♪"
-        "♪┗(･o･)┓♪      v(' - ')v    (ノ^_^)ノ     ^(' - ')^      ♪┏(･o･)┛♪"
+    local header_dancers=(
+        "♪ ┏(･o･)┛ STATD DISCO PARTY ┗(･o･)┓ ♪"
+        "♫ (>'-')> STATD BEAT GROOVE <('-'<) ♫"
+        "♬ ٩(◕‿◕｡)۶ STATD DANCE MODE (งツ)ว ♬"
+        "✦ ^(' - ')^ STATD NEON VIBES v(' - ')v ✦"
     )
-
-    local dancers_bot=(
-        "   (づ｡◕‿‿◕｡)づ       ♬   ~(˘▾˘~)         (งツ)ว        ♪   \\(^o^)/"
-        "      ~(˘▾˘~)          ♪   (づ｡◕‿‿◕｡)づ    ٩(◕‿◕｡)۶     ♬   (>'-')>"
-        "       (งツ)ว          ♬   (~˘▾˘)~         \\(^o^)/      ♪   <('-'<)"
-        "   (ノ^_^)ノ           ♪   (づ｡◕‿‿◕｡)づ    ~(˘▾˘~)       ♬   ^('-'^)"
-    )
-
-    local eq_waves=(
-        " ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂  ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-    )
-    local num_eq=${#eq_waves[@]}
+    local num_hd=${#header_dancers[@]}
 
     printf '\033[?25l'
 
     for (( frame=0; frame<total_frames; frame++ )); do
-        local c_border="${colors[$(( frame % num_colors ))]}"
-        local c_title="${colors[$(( (frame + 2) % num_colors ))]}"
-        local c_dance1="${colors[$(( (frame + 4) % num_colors ))]}"
-        local c_dance2="${colors[$(( (frame + 6) % num_colors ))]}"
-        local c_eq="${colors[$(( (frame + 1) % num_colors ))]}"
-        local c_bar="${colors[$(( (frame + 3) % num_colors ))]}"
-        local title="${titles[$(( (frame / 4) % num_titles ))]}"
-        local d_top="${dancers_top[$(( frame % 4 ))]}"
-        local d_bot="${dancers_bot[$(( frame % 4 ))]}"
-        local eq="${eq_waves[$(( frame % num_eq ))]}"
-
         local remaining_tenth=$(( (total_frames - frame) * 60 / total_frames ))
         local sec=$(( remaining_tenth / 10 ))
         local tenth=$(( remaining_tenth % 10 ))
-        local filled_w=$(( frame * 24 / total_frames ))
-        local empty_w=$(( 24 - filled_w ))
 
-        printf '\033[H\033[2J'
-        printf '%b  ┌─────────────────────────────────────────────────────────────┐\033[0m\n' "$c_border"
-        printf '%b  │   %b%-53s%b   │\033[0m\n' "$c_border" "$c_title" "$title" "$c_border"
-        printf '%b  └─────────────────────────────────────────────────────────────┘\033[0m\n\n' "$c_border"
-        printf '%b  %s\033[0m\n\n' "$c_dance1" "$d_top"
-        printf '%b   %s\033[0m\n\n' "$c_eq" "$eq"
-        printf '%b  %s\033[0m\n\n' "$c_dance2" "$d_bot"
+        local c_head="${colors[$(( frame % num_colors ))]}"
+        local head_text="${header_dancers[$(( (frame / 4) % num_hd ))]}"
+        local timer_text="[PARTY ${sec}.${tenth}s]"
 
-        printf '  %bGroove Timer:\033[0m %b[' "$c_title" "$c_bar"
-        local j
-        for (( j=0; j<filled_w; j++ )); do printf '█'; done
-        printf '\033[90m'
-        for (( j=0; j<empty_w; j++ )); do printf '░'; done
-        printf '%b]\033[0m  \033[1m%d.%ds\033[0m \033[2m(vibing...)\033[0m\n' "$c_bar" "$sec" "$tenth"
+        local target_w=$TOTALW
+        (( target_w < 12 )) && target_w=12
+        local head_pad=$(( target_w - ${#head_text} - ${#timer_text} ))
+        (( head_pad < 1 )) && head_pad=1
+
+        local DANCE_FRAME=()
+        DANCE_FRAME+=("$(printf '%b%s%*s\033[1;33m%s\033[0m' "$c_head" "$head_text" "$head_pad" "" "$timer_text")")
+
+        local r_idx=0
+        for i in "${!LEFTP[@]}"; do
+            local d_icon="${disco_icons[$(( (r_idx + frame) % 6 ))]}"
+            local d_mode="${party_modes[$(( (r_idx + frame) % num_modes ))]}"
+
+            # Calculate oscillating dance percentage (15% to 98%)
+            local phase=$(( (frame * 7 + r_idx * 18) % 100 ))
+            local d_pct
+            if (( phase < 50 )); then
+                d_pct=$(( 15 + phase * 83 / 50 ))
+            else
+                d_pct=$(( 98 - (phase - 50) * 83 / 50 ))
+            fi
+
+            local orig_name="${LEFTP[$i]}"
+            local metric_name="${orig_name%% *}"
+            [ -z "$metric_name" ] && metric_name="MET"
+
+            local d_left d_left_plain
+            d_left=$(printf '\033[1m%-3s\033[0m %b%s\033[0m \033[1m%3d%%\033[0m  ' "$metric_name" "$c_head" "$d_icon" "$d_pct")
+            d_left_plain=$(printf '%-3s %s %3d%%  ' "$metric_name" "$d_icon" "$d_pct")
+
+            local pad=$(( target_w - ${#d_left_plain} - ${#VALP[$i]} ))
+            (( pad < 0 )) && pad=0
+
+            DANCE_FRAME+=("$(printf '%s%*s%s' "$d_left" "$pad" "" "${VALC[$i]}")")
+            DANCE_FRAME+=("$(bar_gradient "$d_pct" "$target_w" "$d_mode")")
+
+            if (( i == 0 )) && (( ${#CORE_ROWS[@]} > 0 )); then
+                case "$CORE_STYLE" in
+                    dots)
+                        local d_cline="${C_GREY}c ${C_RESET}"
+                        for (( c=0; c<NCPU; c++ )); do
+                            local c_phase=$(( (frame * 8 + c * 12) % 100 ))
+                            local cp=$(( 10 + c_phase * 88 / 100 ))
+                            d_cline+="$(pct_color "$cp")\xe2\x97\x8f"
+                        done
+                        DANCE_FRAME+=("${d_cline}${C_RESET}")
+                        ;;
+                    spark)
+                        local SPK=(' ' '▂' '▃' '▄' '▅' '▆' '▇' '█')
+                        local d_cline="${C_GREY}c ${C_RESET}"
+                        for (( c=0; c<NCPU; c++ )); do
+                            local c_phase=$(( (frame * 8 + c * 12) % 100 ))
+                            local s_idx=$(( c_phase * 8 / 100 ))
+                            (( s_idx > 7 )) && s_idx=7
+                            d_cline+="$(pct_color "$(( c_phase ))")${SPK[$s_idx]}"
+                        done
+                        DANCE_FRAME+=("${d_cline}${C_RESET}")
+                        ;;
+                    *)
+                        for r in "${CORE_ROWS[@]}"; do DANCE_FRAME+=("$r"); done
+                        ;;
+                esac
+            fi
+
+            r_idx=$(( r_idx + 1 ))
+        done
+
+        # Render dance frame at top left
+        printf '\033[H'
+        for line in "${DANCE_FRAME[@]}"; do
+            printf '\033[K%s\n' "$line"
+        done
 
         sleep 0.15
     done
 
-    printf '\033[?25h\033[H\033[2J'
+    NEED_FULL_REDRAW=1
 }
 
 # ------------------------------------------------------------

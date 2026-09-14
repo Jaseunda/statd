@@ -441,96 +441,119 @@ cmd_reset() {
 }
 
 # ------------------------------------------------------------
-# Easter Egg: Dance Party Animation (6 seconds)
+# Easter Egg: Dance Mode (6 seconds)
 # Triggered by pressing "\"
+# Dances the EXACT current display format with bouncing bars & cycling colors
 # ------------------------------------------------------------
 trigger_dance_party() {
-    local frame=0 total_frames=40
+    local total_frames=40
+    local frame=0
+
     local colors=(
-        "\033[1;31m"      # Red
-        "\033[38;5;208m"  # Neon Orange
+        "\033[1;36m"      # Cyan
+        "\033[1;35m"      # Magenta
         "\033[1;33m"      # Yellow
         "\033[1;32m"      # Green
-        "\033[38;5;51m"   # Neon Cyan
-        "\033[1;34m"      # Blue
+        "\033[38;5;208m"  # Neon Orange
         "\033[38;5;213m"  # Hot Pink
-        "\033[1;35m"      # Magenta
+        "\033[38;5;51m"   # Bright Cyan
         "\033[38;5;154m"  # Lime
     )
     local num_colors=${#colors[@]}
+    local party_modes=("cyan" "amber" "purple" "matrix" "nord" "mag" "load")
+    local num_modes=${#party_modes[@]}
 
     local titles=(
-        "★ ★ ★   S T A T D   D I S C O   P A R T Y   ★ ★ ★"
-        "♫ ♫ ♫   D A N C I N G   W I T H   S T A T S   ♫ ♫ ♫"
-        "✦ ✦ ✦   E A S T E R   E G G   U N L O C K E D !   ✦ ✦ ✦"
-        "♥ ♥ ♥   F E E L   T H E   G R O O V E   ♥ ♥ ♥"
-        "⚡ ⚡ ⚡   U L T I M A T E   V I B E S   ⚡ ⚡ ⚡"
+        "♪ ┏(･o･)┛  StatD Disco Party  ┗(･o･)┓ ♪"
+        "♫ (>'-')>  StatD Beat Groove  <('-'<) ♫"
+        "♬ ٩(◕‿◕｡)۶ StatD Dance Mode  (งツ)ว ♬"
+        "✦ ^(' - ')^ StatD Neon Vibes  v(' - ')v ✦"
     )
     local num_titles=${#titles[@]}
-
-    local dancers_top=(
-        "♪┏(･o･)┛♪       (>'-')>      ٩(◕‿◕｡)۶      <('-'<)       ♪┗(･o･)┓♪"
-        "♪┗(･o･)┓♪       <('-'<)       (งツ)ว        (>'-')>       ♪┏(･o･)┛♪"
-        "♪┏(･o･)┛♪      ^(' - ')^     \\(^o^)/     v(' - ')v      ♪┗(･o･)┓♪"
-        "♪┗(･o･)┓♪      v(' - ')v    (ノ^_^)ノ     ^(' - ')^      ♪┏(･o･)┛♪"
-    )
-
-    local dancers_bot=(
-        "   (づ｡◕‿‿◕｡)づ       ♬   ~(˘▾˘~)         (งツ)ว        ♪   \\(^o^)/"
-        "      ~(˘▾˘~)          ♪   (づ｡◕‿‿◕｡)づ    ٩(◕‿◕｡)۶     ♬   (>'-')>"
-        "       (งツ)ว          ♬   (~˘▾˘)~         \\(^o^)/      ♪   <('-'<)"
-        "   (ノ^_^)ノ           ♪   (づ｡◕‿‿◕｡)づ    ~(˘▾˘~)       ♬   ^('-'^)"
-    )
-
-    local eq_waves=(
-        " ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂  ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-        "▆▅▄▃▂ ▂▃▄▅▆▇█▇▆▅▄▃▂ ▂▃▄▅▆▇█▇▆ ▂▃▄▅▆▇█▇▆▅▄▃▂ "
-    )
-    local num_eq=${#eq_waves[@]}
 
     printf '\033[?25l'
 
     for (( frame=0; frame<total_frames; frame++ )); do
-        local c_border="${colors[$(( frame % num_colors ))]}"
-        local c_title="${colors[$(( (frame + 2) % num_colors ))]}"
-        local c_dance1="${colors[$(( (frame + 4) % num_colors ))]}"
-        local c_dance2="${colors[$(( (frame + 6) % num_colors ))]}"
-        local c_eq="${colors[$(( (frame + 1) % num_colors ))]}"
-        local c_bar="${colors[$(( (frame + 3) % num_colors ))]}"
-        local title="${titles[$(( (frame / 4) % num_titles ))]}"
-        local d_top="${dancers_top[$(( frame % 4 ))]}"
-        local d_bot="${dancers_bot[$(( frame % 4 ))]}"
-        local eq="${eq_waves[$(( frame % num_eq ))]}"
-
         local remaining_tenth=$(( (total_frames - frame) * 60 / total_frames ))
         local sec=$(( remaining_tenth / 10 ))
         local tenth=$(( remaining_tenth % 10 ))
-        local filled_w=$(( frame * 24 / total_frames ))
-        local empty_w=$(( 24 - filled_w ))
 
+        local c_border="${colors[$(( frame % num_colors ))]}"
+        local c_title="${colors[$(( (frame + 2) % num_colors ))]}"
+        local title="${titles[$(( (frame / 4) % num_titles ))]}"
+
+        # Move cursor home and clear
         printf '\033[H\033[2J'
-        printf '%b  ┌─────────────────────────────────────────────────────────────┐\033[0m\n' "$c_border"
-        printf '%b  │   %b%-53s%b   │\033[0m\n' "$c_border" "$c_title" "$title" "$c_border"
-        printf '%b  └─────────────────────────────────────────────────────────────┘\033[0m\n\n' "$c_border"
-        printf '%b  %s\033[0m\n\n' "$c_dance1" "$d_top"
-        printf '%b   %s\033[0m\n\n' "$c_eq" "$eq"
-        printf '%b  %s\033[0m\n\n' "$c_dance2" "$d_bot"
 
-        printf '  %bGroove Timer:\033[0m %b[' "$c_title" "$c_bar"
-        local j
-        for (( j=0; j<filled_w; j++ )); do printf '█'; done
-        printf '\033[90m'
-        for (( j=0; j<empty_w; j++ )); do printf '░'; done
-        printf '%b]\033[0m  \033[1m%d.%ds\033[0m \033[2m(vibing...)\033[0m\n' "$c_bar" "$sec" "$tenth"
+        # Banner (same format, animated text and colors)
+        printf '%b  ┌─────────────────────────────────────────────────────────────┐\033[0m\n' "$c_border"
+        printf '%b  │\033[0m   %b%-43s%b  \033[1;33m[%d.%ds]\033[0m   %b│\033[0m\n' "$c_border" "$c_title" "$title" "$c_border" "$sec" "$tenth" "$c_border"
+        printf '%b  │\033[0m   \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m      %b│\033[0m\n' "$c_border" "$c_border"
+        printf '%b  └─────────────────────────────────────────────────────────────┘\033[0m\n\n' "$c_border"
+
+        # List themes with cursor indicator (same format as current display)
+        local i
+        for (( i=0; i<total; i++ )); do
+            IFS='|' read -r t_name t_cpu t_gpu t_ram t_swp t_dsk t_ld t_desc t_type <<< "${items[i]}"
+            local active_tag=""
+            if [ "$t_name" = "$CURRENT_THEME" ]; then
+                active_tag="\033[32m [active]\033[0m"
+            fi
+
+            if (( i == cur_idx )); then
+                printf '  %b▸ \033[1;37m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$c_title" "$t_name" "$active_tag" "$t_desc"
+            else
+                printf '    \033[2m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$t_desc"
+            fi
+        done
+
+        # Live Preview Box (same format, dancing bars & colors)
+        IFS='|' read -r cur_name cur_cpu cur_gpu cur_ram cur_swp cur_dsk cur_ld cur_desc cur_type <<< "${items[cur_idx]}"
+
+        # Calculate dancing percentages and modes for each of the 6 metrics
+        local p_cpu=$(( 15 + ((frame * 7 + 0 * 18) % 100 < 50 ? ((frame * 7 + 0 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 0 * 18) % 100) - 50) * 85 / 50) ))
+        local p_gpu=$(( 15 + ((frame * 7 + 1 * 18) % 100 < 50 ? ((frame * 7 + 1 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 1 * 18) % 100) - 50) * 85 / 50) ))
+        local p_ram=$(( 15 + ((frame * 7 + 2 * 18) % 100 < 50 ? ((frame * 7 + 2 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 2 * 18) % 100) - 50) * 85 / 50) ))
+        local p_swp=$(( 15 + ((frame * 7 + 3 * 18) % 100 < 50 ? ((frame * 7 + 3 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 3 * 18) % 100) - 50) * 85 / 50) ))
+        local p_dsk=$(( 15 + ((frame * 7 + 4 * 18) % 100 < 50 ? ((frame * 7 + 4 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 4 * 18) % 100) - 50) * 85 / 50) ))
+        local p_ld=$((  15 + ((frame * 7 + 5 * 18) % 100 < 50 ? ((frame * 7 + 5 * 18) % 100) * 85 / 50 : 85 - (((frame * 7 + 5 * 18) % 100) - 50) * 85 / 50) ))
+
+        local m_cpu="${party_modes[$(( (frame + 0) % num_modes ))]}"
+        local m_gpu="${party_modes[$(( (frame + 1) % num_modes ))]}"
+        local m_ram="${party_modes[$(( (frame + 2) % num_modes ))]}"
+        local m_swp="${party_modes[$(( (frame + 3) % num_modes ))]}"
+        local m_dsk="${party_modes[$(( (frame + 4) % num_modes ))]}"
+        local m_ld="${party_modes[$((  (frame + 5) % num_modes ))]}"
+
+        printf '\n%b  ┌─ Live Preview: \033[1;37m%-12s\033[0m%b \033[1;33m[DANCING]\033[0m%b───────────────┐\033[0m\n' "$c_border" "$cur_name" "$c_border" "$c_border"
+
+        printf '%b  │\033[0m  CPU  ' "$c_border"
+        bar_gradient "$p_cpu" 24 "$m_cpu"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_cpu" "$m_cpu" "$c_border"
+
+        printf '%b  │\033[0m  GPU  ' "$c_border"
+        bar_gradient "$p_gpu" 24 "$m_gpu"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_gpu" "$m_gpu" "$c_border"
+
+        printf '%b  │\033[0m  RAM  ' "$c_border"
+        bar_gradient "$p_ram" 24 "$m_ram"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_ram" "$m_ram" "$c_border"
+
+        printf '%b  │\033[0m  SWP  ' "$c_border"
+        bar_gradient "$p_swp" 24 "$m_swp"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_swp" "$m_swp" "$c_border"
+
+        printf '%b  │\033[0m  DSK  ' "$c_border"
+        bar_gradient "$p_dsk" 24 "$m_dsk"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_dsk" "$m_dsk" "$c_border"
+
+        printf '%b  │\033[0m  LD   ' "$c_border"
+        bar_gradient "$p_ld" 24 "$m_ld"
+        printf '  %2d%%  \033[2m(%-8s)\033[0m %b│\033[0m\n' "$p_ld" "$m_ld" "$c_border"
+        printf '%b  └─────────────────────────────────────────────────────────────┘\033[0m\n' "$c_border"
 
         sleep 0.15
     done
-
-    printf '\033[?25h\033[H\033[2J'
 }
 
 # ------------------------------------------------------------
