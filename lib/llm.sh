@@ -16,8 +16,22 @@ llama_pid_alive() {
     local pid=$1
     [ -z "$pid" ] && return 1
     if [ "$OS_TYPE" = "linux" ]; then
-        [ -r "/proc/$pid/cmdline" ] || return 1
-        grep -aqE 'llama-(server|cli|run|bench)' "/proc/$pid/cmdline" 2>/dev/null
+        [ -d "/proc/$pid" ] || return 1
+        local comm prog
+        if [ -r "/proc/$pid/comm" ]; then
+            { read -r comm < "/proc/$pid/comm"; } 2>/dev/null
+            case "$comm" in
+                llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*) return 0 ;;
+            esac
+        fi
+        if [ -r "/proc/$pid/cmdline" ]; then
+            { read -r -d '' prog < "/proc/$pid/cmdline"; } 2>/dev/null
+            prog="${prog##*/}"
+            case "$prog" in
+                llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*) return 0 ;;
+            esac
+        fi
+        return 1
     else
         kill -0 "$pid" 2>/dev/null
     fi

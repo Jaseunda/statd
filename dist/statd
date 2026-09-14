@@ -449,12 +449,28 @@ _linux_get_uptime() {
 }
 
 _linux_find_llama_pid() {
-    local d
+    local d comm prog
     for d in /proc/[0-9]*; do
         [ -r "$d/cmdline" ] || continue
-        grep -aqE 'llama-(server|cli|run|bench)' "$d/cmdline" 2>/dev/null || continue
-        printf '%s' "${d##*/}"
-        return 0
+        # 1. Check comm (kernel process name) if available
+        if [ -r "$d/comm" ]; then
+            { read -r comm < "$d/comm"; } 2>/dev/null
+            case "$comm" in
+                llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*)
+                    printf '%s' "${d##*/}"
+                    return 0
+                    ;;
+            esac
+        fi
+        # 2. Check argv[0] from cmdline (first null-terminated token only)
+        { read -r -d '' prog < "$d/cmdline"; } 2>/dev/null || continue
+        prog="${prog##*/}"
+        case "$prog" in
+            llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*)
+                printf '%s' "${d##*/}"
+                return 0
+                ;;
+        esac
     done
     return 1
 }
@@ -463,13 +479,13 @@ _linux_find_llama_pid() {
 _linux_get_llama_proc_stats() {
     local pid=$1
     [ -r "/proc/$pid/stat" ] || return 1
-    local lstat rest L_UT L_ST L_RSS
+    local lstat rest L_UT L_ST L_RSS _junk
     { read -r lstat < "/proc/$pid/stat"; } 2>/dev/null || return 1
     rest="${lstat#*) }"
     [[ "$rest" == "$lstat" ]] && return 1
-    read -r _ _ _ _ _ _ _ _ _ _ L_UT L_ST _ _ _ _ _ _ _ _ L_RSS <<< "$rest"
-    [[ "$L_UT" =~ ^[0-9]+$ && "$L_ST" =~ ^[0-9]+$ ]] || return 1
-    printf '%d %d' $(( L_UT + L_ST )) "$L_RSS"
+    read -r _ _ _ _ _ _ _ _ _ _ _ L_UT L_ST _ _ _ _ _ _ _ _ L_RSS _junk <<< "$rest"
+    [[ "$L_UT" =~ ^[0-9]+$ && "$L_ST" =~ ^[0-9]+$ && "$L_RSS" =~ ^[0-9]+$ ]] || return 1
+    printf '%d %d\n' "$(( L_UT + L_ST ))" "$L_RSS" 2>/dev/null
 }
 
 # Returns: <util_pct> <mem_used_bytes> <mem_total_bytes> <temp_celsius> <model_name>
@@ -701,7 +717,7 @@ _macos_get_uptime() {
 }
 
 _macos_find_llama_pid() {
-    pgrep -f 'llama-(server|cli|run|bench)' 2>/dev/null | head -1
+    pgrep -x 'llama-server|llama-cli|llama-run|llama-bench|llama-simple' 2>/dev/null | head -1
 }
 
 # Returns: <cpu_pct_integer> <rss_kB>
@@ -869,8 +885,22 @@ llama_pid_alive() {
     local pid=$1
     [ -z "$pid" ] && return 1
     if [ "$OS_TYPE" = "linux" ]; then
-        [ -r "/proc/$pid/cmdline" ] || return 1
-        grep -aqE 'llama-(server|cli|run|bench)' "/proc/$pid/cmdline" 2>/dev/null
+        [ -d "/proc/$pid" ] || return 1
+        local comm prog
+        if [ -r "/proc/$pid/comm" ]; then
+            { read -r comm < "/proc/$pid/comm"; } 2>/dev/null
+            case "$comm" in
+                llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*) return 0 ;;
+            esac
+        fi
+        if [ -r "/proc/$pid/cmdline" ]; then
+            { read -r -d '' prog < "/proc/$pid/cmdline"; } 2>/dev/null
+            prog="${prog##*/}"
+            case "$prog" in
+                llama-server*|llama-cli*|llama-run*|llama-bench*|llama-simple*) return 0 ;;
+            esac
+        fi
+        return 1
     else
         kill -0 "$pid" 2>/dev/null
     fi
@@ -2219,7 +2249,7 @@ while true; do
     fi
 
     if [ -n "$LPID" ]; then
-        read -r L_TICKS L_RSS <<< "$(get_llama_proc_stats "$LPID")"
+        read -r L_TICKS L_RSS _junk <<< "$(get_llama_proc_stats "$LPID" 2>/dev/null)"
         if [[ "$L_TICKS" =~ ^[0-9]+$ ]]; then
             if [ "$OS_TYPE" = "macos" ]; then
                 # macOS: get_llama_proc_stats returns instantaneous pcpu + rss_kB

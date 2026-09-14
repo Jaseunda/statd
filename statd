@@ -1427,7 +1427,7 @@ while true; do
     fi
 
     if [ -n "$LPID" ]; then
-        read -r L_TICKS L_RSS <<< "$(get_llama_proc_stats "$LPID")"
+        read -r L_TICKS L_RSS _junk <<< "$(get_llama_proc_stats "$LPID" 2>/dev/null)"
         if [[ "$L_TICKS" =~ ^[0-9]+$ ]]; then
             if [ "$OS_TYPE" = "macos" ]; then
                 # macOS: get_llama_proc_stats returns instantaneous pcpu + rss_kB

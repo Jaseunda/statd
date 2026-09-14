@@ -180,7 +180,7 @@ _macos_get_uptime() {
 }
 
 _macos_find_llama_pid() {
-    pgrep -f 'llama-(server|cli|run|bench)' 2>/dev/null | head -1
+    pgrep -x 'llama-server|llama-cli|llama-run|llama-bench|llama-simple' 2>/dev/null | head -1
 }
 
 # Returns: <cpu_pct_integer> <rss_kB>
