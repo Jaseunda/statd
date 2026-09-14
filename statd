@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+# statd — minimal terminal system stats HUD
+# https://github.com/Jaseunda/statd
+# MIT License
+
+set -o pipefail
+
+# ------------------------------------------------------------
+# Locate the lib directory (supports in-tree dev and installed)
+# ------------------------------------------------------------
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_PREFIX_DIR="$(dirname "$_SCRIPT_DIR")"
+_LIB_DIR=""
+
+for _d in \
+    "$_SCRIPT_DIR/lib" \
+    "$_PREFIX_DIR/lib/statd" \
+    "/usr/local/lib/statd" \
+    "/opt/homebrew/lib/statd" \
+    "/usr/lib/statd" \
+    "/usr/share/statd/lib"
+do
+    if [ -d "$_d" ]; then
+        _LIB_DIR="$_d"
+        break
+    fi
+done
+
+if [ -z "$_LIB_DIR" ]; then
+    printf 'statd: cannot locate lib directory\n' >&2
+    exit 1
+fi
+
+unset _d _SCRIPT_DIR _PREFIX_DIR
+
+# Source order matters: platform libs first, then the dispatcher layer.
+# shellcheck source=lib/colors.sh
+source "$_LIB_DIR/colors.sh"
+# shellcheck source=lib/render.sh
+source "$_LIB_DIR/render.sh"
+# shellcheck source=lib/sensors_linux.sh
+source "$_LIB_DIR/sensors_linux.sh"
+# shellcheck source=lib/sensors_macos.sh
+source "$_LIB_DIR/sensors_macos.sh"
+# shellcheck source=lib/sensors.sh
+source "$_LIB_DIR/sensors.sh"
+# shellcheck source=lib/llm.sh
+source "$_LIB_DIR/llm.sh"
+
+unset _LIB_DIR
+
+# ------------------------------------------------------------
+# Configuration (all overridable via environment)
+# ------------------------------------------------------------
+INTERVAL="${INTERVAL:-1}"           # seconds between refresh
+SLOW_EVERY="${SLOW_EVERY:-30}"      # seconds between slow-tier updates
+PID_SCAN_EVERY="${PID_SCAN_EVERY:-5}"
+BAR_WIDTH="${BAR_WIDTH:-20}"        # gradient bar character width
+CORE_BAR_W="${CORE_BAR_W:-5}"       # per-core mini-bar width
+CORE_STYLE="${CORE_STYLE:-spark}"   # spark | dots | seg | mini
+CORES_SHOWN="${CORES_SHOWN:-0}"     # 1 = show per-core panel on startup
+LLM_PORT="${LLM_PORT:-8080}"        # llama-server metrics port
+
+# ------------------------------------------------------------
+# State variables
+# ------------------------------------------------------------
+PREV_CPU_TOTAL=0
+PREV_CPU_IDLE=0
+PREV_IDLE_US=0
+PREV_CPU_TIME=$(date +%s%N)
+declare -a PREV_CORE_I=()
+declare -a PREV_LINES=()
+PREV_NLINES=0
+
+LPID=""
+LLM_SEED=0
+PREV_LLM_TOK=0
+PREV_LLM_T=0
+LLM_CPU_SEED=0
+LLM_TICKS_PREV=0
+PREV_LLM_T2=0
+PID_SCAN_COUNT=0
+PID_INIT=0
+
+SLOW_COUNT=0
+SLOW_INIT=0
+BATT_PCT=""
+BATT_STATUS=""
+DISK_TOTAL=0
+DISK_USED=0
+DISK_PCT=0
+UP="--"
+
+CLK_TCK=$(getconf CLK_TCK 2>/dev/null)
+[[ "$CLK_TCK" =~ ^[0-9]+$ ]] || CLK_TCK=100
+PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null)
+[[ "$PAGE_SIZE" =~ ^[0-9]+$ ]] || PAGE_SIZE=4096
+
+# ------------------------------------------------------------
+# Lifecycle
+# ------------------------------------------------------------
+cleanup() {
+    printf '%s\033[?25h\n' "$C_RESET"
+    exit 0
+}
+trap cleanup INT TERM
+
+printf '\033[?25l'
+clear
+
+# ============================================================
+# Main loop
+# ============================================================
+while true; do
+
+    # ---- Memory ----
+    read -r MEM_TOTAL MEM_USED SWAP_TOTAL SWAP_USED <<< "$(get_memory)"
+    MEM_TOTAL_B=$(( MEM_TOTAL * 1024 ))
+    MEM_USED_B=$(( MEM_USED  * 1024 ))
+    SWAP_TOTAL_B=$(( SWAP_TOTAL * 1024 ))
+    SWAP_USED_B=$(( SWAP_USED  * 1024 ))
+    (( MEM_TOTAL  > 0 )) && MEM_PCT=$(( MEM_USED  * 100 / MEM_TOTAL  )) || MEM_PCT=0
+    (( SWAP_TOTAL > 0 )) && SWAP_PCT=$(( SWAP_USED * 100 / SWAP_TOTAL )) || SWAP_PCT=0
+
+    # ---- Timing ----
+    NOW=$(date +%s%N)
+    DT_US=$(( (NOW - PREV_CPU_TIME) / 1000 ))
+
+    # ---- CPU% ----
+    CPU='--'
+    read -r CPU_TOTAL CPU_IDLE <<< "$(get_cpu_raw)"
+    if [[ "$CPU_TOTAL" =~ ^[0-9]+$ ]]; then
+        if (( PREV_CPU_TOTAL > 0 )); then
+            C_DT=$(( CPU_TOTAL - PREV_CPU_TOTAL ))
+            C_IDLE=$(( CPU_IDLE - PREV_CPU_IDLE ))
+            if (( C_DT > 0 )); then
+                CPU=$(( (C_DT - C_IDLE) * 100 / C_DT ))
+                (( CPU <   0 )) && CPU=0
+                (( CPU > 100 )) && CPU=100
+            else
+                CPU=0
+            fi
+        fi
+        PREV_CPU_TOTAL=$CPU_TOTAL
+        PREV_CPU_IDLE=$CPU_IDLE
+    fi
+
+    # Linux fallback: cpuidle residency when /proc/stat is unavailable.
+    if [[ "$CPU" == '--' ]] && [ "$OS_TYPE" = "linux" ]; then
+        IDLE_US=$(get_idle_us)
+        if (( IDLE_US > 0 && PREV_IDLE_US > 0 && IDLE_US >= PREV_IDLE_US && DT_US > 0 )); then
+            CAP_US=$(( DT_US * NCPU ))
+            BUSY_US=$(( CAP_US - (IDLE_US - PREV_IDLE_US) ))
+            (( BUSY_US < 0 )) && BUSY_US=0
+            CPU=$(( BUSY_US * 100 / CAP_US ))
+            (( CPU > 100 )) && CPU=100
+        fi
+        (( IDLE_US > 0 )) && PREV_IDLE_US=$IDLE_US
+    fi
+
+    # ---- Per-core % (Linux cpuidle residency; macOS shows placeholder) ----
+    declare -a CUR_I=()
+    if [ "$OS_TYPE" = "linux" ]; then
+        while read -r c v; do
+            [[ "$c" =~ ^[0-9]+$ ]] && CUR_I[$c]=$v
+        done < <(get_core_idle)
+    fi
+
+    declare -a CORE_PCT=()
+    for (( c=0; c<NCPU; c++ )); do
+        pv=${PREV_CORE_I[$c]:-0}
+        cv=${CUR_I[$c]:-0}
+        cpc='--'
+        if [ "$OS_TYPE" = "linux" ] && (( DT_US >= 200000 && pv > 0 && cv >= pv )); then
+            didle=$(( cv - pv ))
+            busy=$(( (DT_US - didle) * 100 / DT_US ))
+            (( busy <   0 )) && busy=0
+            (( busy > 100 )) && busy=100
+            cpc=$busy
+        fi
+        CORE_PCT[$c]=$cpc
+    done
+    for c in "${!CUR_I[@]}"; do PREV_CORE_I[$c]=${CUR_I[$c]}; done
+    PREV_CPU_TIME=$NOW
+
+    FREQ=$(get_cpu_freq)
+    TEMP=$(get_temp)
+
+    # ---- LLM: llama-server tok/s via /metrics ----
+    TPS_STR=''
+    MOUT=$(get_llama_metrics || true)
+    if [ -n "$MOUT" ]; then
+        PTOK=$(printf '%s\n' "$MOUT" \
+            | awk '$1 ~ /^llama_predicted_tokens_total/ {printf "%d", $NF; exit}' 2>/dev/null)
+    else
+        PTOK=''
+    fi
+    if [[ "$PTOK" =~ ^[0-9]+$ ]]; then
+        if (( LLM_SEED && PTOK >= PREV_LLM_TOK )); then
+            D_MS_L=$(( (NOW - PREV_LLM_T) / 1000000 ))
+            (( D_MS_L < 200 )) && D_MS_L=200
+            TPS10=$(( (PTOK - PREV_LLM_TOK) * 10000 / D_MS_L ))
+            TPS_STR="$(printf '%d.%d' $(( TPS10 / 10 )) $(( TPS10 % 10 )))"
+        fi
+        PREV_LLM_TOK=$PTOK
+        PREV_LLM_T=$NOW
+        LLM_SEED=1
+    else
+        LLM_SEED=0
+    fi
+
+    # ---- LLM: fallback process CPU% + RSS ----
+    LCPU_STR=''
+    RSS_STR=''
+    if ! llama_pid_alive "$LPID"; then
+        LPID=""
+        LLM_CPU_SEED=0
+        LLM_TICKS_PREV=0
+    fi
+    if [ -z "$LPID" ]; then
+        PID_SCAN_COUNT=$(( PID_SCAN_COUNT + 1 ))
+        if (( PID_INIT == 0 || PID_SCAN_COUNT >= PID_SCAN_EVERY )); then
+            LPID=$(find_llama_pid)
+            PID_SCAN_COUNT=0
+            PID_INIT=1
+        fi
+    fi
+
+    if [ -n "$LPID" ]; then
+        read -r L_TICKS L_RSS <<< "$(get_llama_proc_stats "$LPID")"
+        if [[ "$L_TICKS" =~ ^[0-9]+$ ]]; then
+            if [ "$OS_TYPE" = "macos" ]; then
+                # macOS: get_llama_proc_stats returns instantaneous pcpu + rss_kB
+                LC=$L_TICKS
+                [[ "$LC" =~ ^[0-9]+$ ]] && (( LC > 999 )) && LC=999
+                LCPU_STR="$LC"
+            else
+                if (( LLM_CPU_SEED )); then
+                    D_TICKS=$(( L_TICKS - LLM_TICKS_PREV ))
+                    D_MS=$(( (NOW - PREV_LLM_T2) / 1000000 ))
+                    if (( D_MS >= 200 && D_TICKS >= 0 )); then
+                        LC=$(( D_TICKS * 100000 / (CLK_TCK * D_MS) ))
+                        (( LC > 999 )) && LC=999
+                        LCPU_STR="$LC"
+                    fi
+                fi
+            fi
+            LLM_TICKS_PREV=$L_TICKS
+            PREV_LLM_T2=$NOW
+            LLM_CPU_SEED=1
+        fi
+        if [[ "$L_RSS" =~ ^[0-9]+$ ]] && (( L_RSS > 0 )); then
+            if [ "$OS_TYPE" = "macos" ]; then
+                RSS_STR=$(human $(( L_RSS * 1024 )))     # ps rss is in kB on macOS
+            else
+                RSS_STR=$(human $(( L_RSS * PAGE_SIZE ))) # /proc rss is in pages on Linux
+            fi
+        fi
+    fi
+
+    # ---- Load average ----
+    L1='--'; L5='--'; L15='--'; NPROC=''; LD_PCT=''
+    read -r L1 L5 L15 RUNTOT <<< "$(get_loadavg)"
+    if [[ "$L1" =~ ^[0-9]+\.[0-9][0-9]$ \
+       && "$L5" =~ ^[0-9]+\.[0-9][0-9]$ \
+       && "$L15" =~ ^[0-9]+\.[0-9][0-9]$ ]]; then
+        L100=${L1/./}
+        LD_PCT=$(( L100 / NCPU ))
+        (( LD_PCT > 100 )) && LD_PCT=100
+        NPROC="${RUNTOT##*/}"
+    else
+        L1='--'; L5='--'; L15='--'
+    fi
+
+    # ---- Slow tier: battery, disk, uptime (refreshed every SLOW_EVERY s) ----
+    SLOW_COUNT=$(( SLOW_COUNT + 1 ))
+    if (( SLOW_INIT == 0 || SLOW_COUNT >= SLOW_EVERY )); then
+        read -r DISK_TOTAL DISK_USED <<< "$(get_disk)"
+        (( DISK_TOTAL > 0 )) \
+            && DISK_PCT=$(( DISK_USED * 100 / DISK_TOTAL )) \
+            || DISK_PCT=0
+        read -r BATT_PCT BATT_STATUS <<< "$(get_battery)"
+        UP=$(get_uptime)
+        SLOW_COUNT=0
+        SLOW_INIT=1
+    fi
+
+    # ---- Temperature color ----
+    if [[ "$TEMP" =~ ^[0-9]+$ ]]; then
+        if   (( TEMP < 40 )); then TEMP_COLOR=$C_GREEN
+        elif (( TEMP < 55 )); then TEMP_COLOR=$C_YELLOW
+        else                       TEMP_COLOR=$C_RED
+        fi
+        TEMP_STR="${TEMP}C"
+    else
+        TEMP_COLOR="$C_GREY"
+        TEMP_STR="--"
+    fi
+
+    # ============================================================
+    # Build frame
+    # ============================================================
+    declare -a LEFTP=() LEFTC=() VALP=() VALC=() ROWPCT=() ROWMODE=()
+
+    row_start
+    seg "CPU" "$C_BOLD"
+    seg " $(printf '%3s' "$CPU")" "$(pct_color "$CPU")"
+    seg "%  " ""
+    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+    row_start
+    seg "$FREQ" "$C_BLUE"
+    seg "  " ""
+    seg "$TEMP_STR" "$TEMP_COLOR"
+    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$CPU"); ROWMODE+=("load")
+
+    row_start
+    seg "RAM" "$C_BOLD"
+    seg " $(printf '%3d' "$MEM_PCT")" "$(pct_color "$MEM_PCT")"
+    seg "%  " ""
+    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+    row_start
+    seg "$(human "$MEM_USED_B")/$(human "$MEM_TOTAL_B")" "$C_DIM"
+    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$MEM_PCT"); ROWMODE+=("load")
+
+    row_start
+    seg "SWP" "$C_BOLD"
+    seg " $(printf '%3d' "$SWAP_PCT")" "$C_MAG"
+    seg "%  " ""
+    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+    row_start
+    seg "$(human "$SWAP_USED_B")/$(human "$SWAP_TOTAL_B")" "$C_MAG"
+    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("mag")
+
+    row_start
+    seg "DSK" "$C_BOLD"
+    seg " $(printf '%3d' "$DISK_PCT")" "$(pct_color "$DISK_PCT")"
+    seg "%  " ""
+    LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+    row_start
+    seg "$(human "$DISK_USED")/$(human "$DISK_TOTAL")" "$C_DIM"
+    VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$DISK_PCT"); ROWMODE+=("load")
+
+    if [[ "$LD_PCT" =~ ^[0-9]+$ ]]; then
+        row_start
+        seg "LD" "$C_BOLD"
+        seg " $(printf '%3d' "$LD_PCT")" "$(pct_color "$LD_PCT")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        seg "$L1 $L5 $L15  ${NPROC}p" "$C_DIM"
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$LD_PCT"); ROWMODE+=("load")
+    fi
+
+    VALMAX=0
+    for v in "${VALP[@]}"; do (( ${#v} > VALMAX )) && VALMAX=${#v}; done
+    TOTALW=$(( ${#LEFTP[0]} + VALMAX ))
+
+    # ---- Per-core panel ----
+    CORE_ROWS=()
+    if (( CORES_SHOWN )); then
+        case "$CORE_STYLE" in
+            dots)
+                line="${C_GREY}c ${C_RESET}"
+                for (( c=0; c<NCPU; c++ )); do
+                    p="${CORE_PCT[$c]:---}"
+                    if [[ "$p" =~ ^[0-9]+$ ]]; then
+                        line+="$(pct_color "$p")\xe2\x97\x8f"
+                    else
+                        line+="${C_GREY}\xc2\xb7"
+                    fi
+                done
+                CORE_ROWS+=("${line}${C_RESET}")
+                ;;
+            spark)
+                SPK=$'\xe2\x96\x81\xe2\x96\x82\xe2\x96\x83\xe2\x96\x84\xe2\x96\x85\xe2\x96\x86\xe2\x96\x87\xe2\x96\x88'
+                line="${C_GREY}c ${C_RESET}"
+                for (( c=0; c<NCPU; c++ )); do
+                    p="${CORE_PCT[$c]:---}"
+                    if [[ "$p" =~ ^[0-9]+$ ]]; then
+                        idx=$(( p * 8 / 100 ))
+                        (( idx > 7 )) && idx=7
+                        # Extract the idx-th UTF-8 block character (each is 3 bytes)
+                        char=$(printf '%s' "$SPK" | cut -c$(( idx + 1 )))
+                        line+="$(pct_color "$p")${char}"
+                    else
+                        line+="${C_GREY}\xc2\xb7"
+                    fi
+                done
+                CORE_ROWS+=("${line}${C_RESET}")
+                ;;
+            seg)
+                WT=$(( TOTALW - 2 ))
+                (( WT < NCPU )) && WT=$NCPU
+                BASE=$(( WT / NCPU ))
+                REM=$(( WT % NCPU ))
+                line="${C_GREY}\xe2\x94\x94 ${C_RESET}"
+                for (( c=0; c<NCPU; c++ )); do
+                    w=$BASE
+                    (( c < REM )) && w=$(( w + 1 ))
+                    line+="$(bar_gradient "${CORE_PCT[$c]}" "$w" load)"
+                done
+                CORE_ROWS+=("$line")
+                ;;
+            mini)
+                HALF=$(( (NCPU + 1) / 2 ))
+                for (( r=0; r<HALF; r++ )); do
+                    lc=$r
+                    rc=$(( r + HALF ))
+                    line="$(core_cell "$lc" "${CORE_PCT[$lc]:---}")"
+                    if (( rc < NCPU )); then
+                        line+="   $(core_cell "$rc" "${CORE_PCT[$rc]:---}")"
+                    fi
+                    CORE_ROWS+=("$line")
+                done
+                ;;
+        esac
+    fi
+
+    # ---- Header: clock + uptime ----
+    CLOCK="$(date +%H:%M:%S)"
+    UPTXT="up $UP"
+    pad=$(( TOTALW - ${#CLOCK} - ${#UPTXT} ))
+    (( pad < 1 )) && pad=1
+
+    FRAME=()
+    FRAME+=("$(printf '%s%s%*s%s%s' "$C_DIM" "$CLOCK" "$pad" "" "$UPTXT" "$C_RESET")")
+
+    for i in "${!LEFTP[@]}"; do
+        pad=$(( VALMAX - ${#VALP[$i]} ))
+        (( pad < 0 )) && pad=0
+        FRAME+=("$(printf '%s%*s%s' "${LEFTC[$i]}" "$pad" "" "${VALC[$i]}")")
+        FRAME+=("$(bar_gradient "${ROWPCT[$i]}" "$TOTALW" "${ROWMODE[$i]}")")
+        if (( i == 0 )) && (( ${#CORE_ROWS[@]} > 0 )); then
+            for r in "${CORE_ROWS[@]}"; do FRAME+=("$r"); done
+        fi
+    done
+
+    # ---- LLM row ----
+    if [ -n "$TPS_STR" ] || [ -n "$LCPU_STR" ] || [ -n "$RSS_STR" ]; then
+        row_start
+        seg "LLM" "$C_BOLD"
+        [ -n "$TPS_STR" ]  && seg " ${TPS_STR} t/s" "$C_CYAN"
+        [ -n "$LCPU_STR" ] && { seg "  " ""; seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"; }
+        [ -n "$RSS_STR" ]  && seg "  ${RSS_STR}" "$C_DIM"
+        (( ${#ROW_PLAIN} > 3 )) && FRAME+=("$ROW_COLORED")
+    fi
+
+    # ---- Battery row ----
+    if [ -n "$BATT_PCT" ]; then
+        row_start
+        seg "BAT" "$C_BOLD"
+        seg " $(printf '%3d' "$BATT_PCT")" "$(pct_color $(( 100 - BATT_PCT )))"
+        seg "%  " ""
+        seg "$BATT_STATUS" "$C_DIM"
+        FRAME+=("$ROW_COLORED")
+    fi
+
+    # ============================================================
+    # Dirty-line diff render — only rewrite lines that changed
+    # ============================================================
+    OUT=''
+    NEW_N=${#FRAME[@]}
+    for (( i=0; i<NEW_N; i++ )); do
+        if (( i < PREV_NLINES )) && [[ "${FRAME[i]}" == "${PREV_LINES[i]}" ]]; then
+            continue
+        fi
+        printf -v CHUNK '\033[%d;1H\033[K%s' $(( i + 1 )) "${FRAME[i]}"
+        OUT+=$CHUNK
+    done
+    if (( NEW_N < PREV_NLINES )); then
+        printf -v CHUNK '\033[%d;1H\033[J' $(( NEW_N + 1 ))
+        OUT+=$CHUNK
+    fi
+    [[ -n "$OUT" ]] && printf '%s' "$OUT"
+    PREV_LINES=("${FRAME[@]}")
+    PREV_NLINES=$NEW_N
+
+    # ============================================================
+    # Wait INTERVAL seconds; wake early on keypress
+    # ============================================================
+    T_END=$(( $(date +%s%N) + INTERVAL * 1000000000 ))
+    while :; do
+        CUR_T=$(date +%s%N)
+        (( CUR_T >= T_END )) && break
+        key=''
+        if [ -t 0 ]; then
+            IFS= read -rsn1 -t 0.1 key || true
+        else
+            sleep 0.1
+        fi
+        case "$key" in
+            c|C) CORES_SHOWN=$(( 1 - CORES_SHOWN )); break ;;
+            q|Q) cleanup ;;
+        esac
+    done
+
+done
