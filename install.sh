@@ -55,17 +55,40 @@ else
 fi
 
 # ---- Check Bash version ----
+# curl | bash on macOS will invoke /bin/bash 3.2 (the system default),
+# even if a newer Homebrew bash is installed.  We detect that case, re-exec
+# with the newer bash when possible, and only warn (not abort) when none is
+# found — the installer itself is 3.2-safe; the warning is for statd at
+# runtime.
 step "Checking Bash version"
 BASH_MAJOR="${BASH_VERSINFO[0]:-0}"
+BREW_BASH=""
+
 if (( BASH_MAJOR < 4 )); then
-    warn "Bash $BASH_VERSION detected — statd requires Bash 4.0 or later."
-    if [ "$(uname -s)" = "Darwin" ]; then
-        warn "Install a current Bash via Homebrew:  brew install bash"
-        warn "Then re-run this installer."
+    # Look for a Homebrew-managed bash 4+ before giving up.
+    for _b in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [ -x "$_b" ] && (( $("$_b" -c 'echo ${BASH_VERSINFO[0]}' 2>/dev/null) >= 4 )); then
+            BREW_BASH="$_b"
+            break
+        fi
+    done
+
+    if [ -n "$BREW_BASH" ]; then
+        # Re-exec the entire installer under the newer bash.
+        # Works for both  curl | bash  and  bash install.sh  invocations.
+        info "Re-running installer under $BREW_BASH"
+        exec "$BREW_BASH" -s -- "$@" < "$0"
     fi
-    error "Bash 4.0+ required."
+
+    # No bash 4+ found anywhere — install the files but warn the user.
+    warn "Running under Bash $BASH_VERSION (macOS system shell)."
+    warn "statd itself requires Bash 4.0+. Install it, then run statd:"
+    warn "  brew install bash"
+    BASH_OK=0
+else
+    info "Bash $BASH_VERSION OK"
+    BASH_OK=1
 fi
-info "Bash $BASH_VERSION OK"
 
 # ---- Download ----
 step "Downloading statd ($BRANCH)"
@@ -124,4 +147,12 @@ if ! echo ":$PATH:" | grep -q ":$BINDIR:"; then
 fi
 
 # ---- Done ----
-printf '\n\033[1mDone.\033[0m Run: statd\n\n'
+printf '\n\033[1mInstalled.\033[0m\n\n'
+if [ "${BASH_OK:-1}" = "0" ]; then
+    printf 'statd requires Bash 4.0+. Install it first:\n\n'
+    printf '  brew install bash\n\n'
+    printf 'Then run:\n\n'
+    printf '  statd\n\n'
+else
+    printf 'Run:  statd\n\n'
+fi
