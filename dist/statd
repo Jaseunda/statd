@@ -728,6 +728,7 @@ CORE_BAR_W=5
 CORE_STYLE="spark"
 CORES_SHOWN=0
 LLM_PORT=8080
+FULL_WIDTH=0
 
 # Source persistent config file if present
 if [ -f "$CONFIG_FILE" ]; then
@@ -744,6 +745,7 @@ CORE_BAR_W="${CORE_BAR_W:-5}"
 CORE_STYLE="${CORE_STYLE:-spark}"
 CORES_SHOWN="${CORES_SHOWN:-0}"
 LLM_PORT="${LLM_PORT:-8080}"
+FULL_WIDTH="${FULL_WIDTH:-0}"
 SHOW_CPU="${SHOW_CPU:-1}"
 SHOW_RAM="${SHOW_RAM:-1}"
 SHOW_SWP="${SHOW_SWP:-1}"
@@ -805,6 +807,7 @@ Usage:
   statd <plugin> [options]
 
 Options:
+  -f, --full           Stretch to fill terminal width (auto on mini displays)
   -u, --update         Check for and install the latest update
   --check-update       Check if an update is available without installing
   --config [cmd]       Manage view toggles and settings (or: statd config)
@@ -821,6 +824,7 @@ Options:
 
 Interactive Controls:
   c                    Toggle per-core CPU panel
+  f, w                 Toggle full-width stretch
   l                    Toggle load average row (LD)
   b                    Toggle battery row (BAT)
   s                    Toggle swap row (SWP)
@@ -875,8 +879,9 @@ statd_config() {
                 cpu)         _set_config "SHOW_CPU" "0" ;;
                 ram|mem)     _set_config "SHOW_RAM" "0" ;;
                 llm)         _set_config "SHOW_LLM" "0" ;;
+                full|fit)    _set_config "FULL_WIDTH" "0" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -893,8 +898,9 @@ statd_config() {
                 cpu)         _set_config "SHOW_CPU" "1" ;;
                 ram|mem)     _set_config "SHOW_RAM" "1" ;;
                 llm)         _set_config "SHOW_LLM" "1" ;;
+                full|fit)    _set_config "FULL_WIDTH" "1" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, ram, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -927,9 +933,11 @@ statd_config() {
                 "$(_on_off "$SHOW_CPU")" "$(_on_off "$SHOW_RAM")" "$(_on_off "$SHOW_SWP")" "$(_on_off "$SHOW_DSK")"
             printf '  LD:  %s    BAT: %s    LLM: %s\n\n' \
                 "$(_on_off "$SHOW_LD")" "$(_on_off "$SHOW_BAT")" "$(_on_off "$SHOW_LLM")"
+            printf 'Display:\n'
+            printf '  Full Width: %s (auto on <= 50 cols)\n\n' "$(_on_off "$FULL_WIDTH")"
             printf 'Commands:\n'
-            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, ram)\n'
-            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, ram)\n'
+            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, ram, full)\n'
+            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, ram, full)\n'
             printf '  statd config set <KEY> <VAL>  (set any setting, e.g. INTERVAL 2)\n'
             printf '  statd config edit             (open in editor)\n'
             printf '  statd config reset            (reset to defaults)\n'
@@ -1220,6 +1228,14 @@ while [[ $# -gt 0 ]]; do
         -h|--help|help)
             show_help
             exit 0
+            ;;
+        -f|--full|--fit)
+            FULL_WIDTH=1
+            shift
+            ;;
+        --no-full)
+            FULL_WIDTH=0
+            shift
             ;;
         -c|--cores)
             CORES_SHOWN=1
@@ -1546,8 +1562,17 @@ while true; do
     LEFTW=0
     for v in "${VALP[@]}"; do (( ${#v} > VALMAX )) && VALMAX=${#v}; done
     for l in "${LEFTP[@]}"; do (( ${#l} > LEFTW )) && LEFTW=${#l}; done
-    TOTALW=$(( LEFTW + VALMAX ))
-    (( TOTALW < BAR_WIDTH )) && TOTALW=$BAR_WIDTH
+    MIN_W=$(( LEFTW + VALMAX ))
+
+    # Full width: automatically fill terminal on mini displays (<= 50 cols) or when FULL_WIDTH=1
+    if (( FULL_WIDTH )) || (( TERM_COLS <= 50 )); then
+        TOTALW=$TERM_COLS
+    else
+        TOTALW=$MIN_W
+        (( TOTALW < BAR_WIDTH )) && TOTALW=$BAR_WIDTH
+    fi
+
+    # Safety: clamp to TERM_COLS
     if (( TERM_COLS > 10 )) && (( TOTALW > TERM_COLS )); then
         TOTALW=$TERM_COLS
     fi
@@ -1645,7 +1670,7 @@ while true; do
     FRAME+=("$(printf '%s%s%*s%s%s' "$C_DIM" "$CLOCK" "$pad" "" "$UPTXT" "$C_RESET")")
 
     for i in "${!LEFTP[@]}"; do
-        pad=$(( VALMAX - ${#VALP[$i]} ))
+        pad=$(( TOTALW - ${#LEFTP[$i]} - ${#VALP[$i]} ))
         (( pad < 0 )) && pad=0
         FRAME+=("$(printf '%s%*s%s' "${LEFTC[$i]}" "$pad" "" "${VALC[$i]}")")
         FRAME+=("$(bar_gradient "${ROWPCT[$i]}" "$TOTALW" "${ROWMODE[$i]}")")
@@ -1659,9 +1684,18 @@ while true; do
         row_start
         seg "LLM" "$C_BOLD"
         [ -n "$TPS_STR" ]  && seg " ${TPS_STR} t/s" "$C_CYAN"
-        [ -n "$LCPU_STR" ] && { seg "  " ""; seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"; }
-        [ -n "$RSS_STR" ]  && seg "  ${RSS_STR}" "$C_DIM"
-        (( ${#ROW_PLAIN} > 3 )) && FRAME+=("$ROW_COLORED")
+        local llm_left="$ROW_COLORED"
+        local llm_left_plain="$ROW_PLAIN"
+
+        row_start
+        [ -n "$LCPU_STR" ] && { seg "${LCPU_STR}%" "$(pct_color "$LCPU_STR")"; seg "  " ""; }
+        [ -n "$RSS_STR" ]  && seg "${RSS_STR}" "$C_DIM"
+        local llm_val="$ROW_COLORED"
+        local llm_val_plain="$ROW_PLAIN"
+
+        local llm_pad=$(( TOTALW - ${#llm_left_plain} - ${#llm_val_plain} ))
+        (( llm_pad < 0 )) && llm_pad=0
+        FRAME+=("$(printf '%s%*s%s' "$llm_left" "$llm_pad" "" "$llm_val")")
     fi
 
     # ---- Battery row ----
@@ -1670,8 +1704,17 @@ while true; do
         seg "BAT" "$C_BOLD"
         seg " $(printf '%3d' "$BATT_PCT")" "$(pct_color $(( 100 - BATT_PCT )))"
         seg "%  " ""
+        local b_left="$ROW_COLORED"
+        local b_left_plain="$ROW_PLAIN"
+
+        row_start
         seg "$BATT_STATUS" "$C_DIM"
-        FRAME+=("$ROW_COLORED")
+        local b_val="$ROW_COLORED"
+        local b_val_plain="$ROW_PLAIN"
+
+        local b_pad=$(( TOTALW - ${#b_left_plain} - ${#b_val_plain} ))
+        (( b_pad < 0 )) && b_pad=0
+        FRAME+=("$(printf '%s%*s%s' "$b_left" "$b_pad" "" "$b_val")")
     fi
 
     # ============================================================
@@ -1722,6 +1765,7 @@ while true; do
         fi
         case "$key" in
             c|C) CORES_SHOWN=$(( 1 - CORES_SHOWN )); break ;;
+            f|F|w|W) FULL_WIDTH=$(( 1 - FULL_WIDTH )); NEED_FULL_REDRAW=1; break ;;
             l|L) SHOW_LD=$(( 1 - SHOW_LD )); break ;;
             b|B) SHOW_BAT=$(( 1 - SHOW_BAT )); break ;;
             s|S) SHOW_SWP=$(( 1 - SHOW_SWP )); break ;;

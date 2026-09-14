@@ -36,6 +36,7 @@ While running, you can press any of these keys anytime:
 
 | Key | Action |
 |-----|--------|
+| `f` / `w` | Toggle full-width stretch (edge-to-edge) |
 | `c` | Toggle per-core CPU panel |
 | `l` | Toggle Load average (`LD`) |
 | `b` | Toggle Battery (`BAT`) |
@@ -138,6 +139,7 @@ curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | ba
 | `install <name>` | Install a plugin (e.g. `statd install api`) |
 | `plugins` | List available and installed plugins |
 | `api [options]` | Start the streaming API server (after `install api`) |
+| `-f, --full` | Stretch to fill terminal width (auto on mini displays) |
 | `-u, --update` | Update statd to latest version |
 | `--check-update` | Check for updates |
 | `--config [cmd]` | Manage view toggles (`statd config`) |
