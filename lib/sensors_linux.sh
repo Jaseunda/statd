@@ -257,38 +257,80 @@ _linux_get_gpu() {
 # Returns: <rx_bytes> <tx_bytes> <interface>
 _linux_net_iface=""
 _linux_get_net() {
-    [ -f /proc/net/dev ] || return 1
-
-    # 1. Try finding default route interface if not cached
-    if [ -z "$_linux_net_iface" ] && [ -f /proc/net/route ]; then
-        _linux_net_iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
+    # 1. Detect primary interface
+    if [ -z "$_linux_net_iface" ]; then
+        if [ -r /proc/net/route ]; then
+            _linux_net_iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
+        fi
+        if [ -z "$_linux_net_iface" ]; then
+            _linux_net_iface=$(ip route show default 2>/dev/null | awk '/default via/{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')
+        fi
+        if [ -z "$_linux_net_iface" ]; then
+            _linux_net_iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')
+        fi
+        if [ -z "$_linux_net_iface" ]; then
+            for _cand in wlan0 rmnet_data0 rmnet0 tun0 eth0 enp0s3; do
+                if [ -d "/sys/class/net/$_cand" ]; then
+                    _linux_net_iface="$_cand"
+                    break
+                fi
+            done
+        fi
     fi
 
     local line iface rx tx
-    if [ -n "$_linux_net_iface" ]; then
+
+    # Method A: Direct /proc/net/dev (fastest, zero-fork)
+    if [ -r /proc/net/dev ]; then
+        if [ -n "$_linux_net_iface" ]; then
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[[:space:]]*(${_linux_net_iface}):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
+                    printf '%s %s %s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$_linux_net_iface"
+                    return 0
+                fi
+            done < /proc/net/dev
+        fi
+
+        # Fallback in /proc/net/dev: scan first active non-virtual interface
         while IFS= read -r line; do
-            if [[ "$line" =~ ^[[:space:]]*(${_linux_net_iface}):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
-                printf '%s %s %s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$_linux_net_iface"
-                return 0
+            if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
+                iface="${BASH_REMATCH[1]}"
+                [[ "$iface" == "lo" || "$iface" == "docker0" || "$iface" =~ ^veth ]] && continue
+                rx="${BASH_REMATCH[2]}"
+                tx="${BASH_REMATCH[3]}"
+                if (( rx > 0 || tx > 0 )); then
+                    _linux_net_iface="$iface"
+                    printf '%s %s %s\n' "$rx" "$tx" "$iface"
+                    return 0
+                fi
             fi
         done < /proc/net/dev
     fi
 
-    # 2. Fallback: scan first active non-virtual, non-loopback interface
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
-            iface="${BASH_REMATCH[1]}"
-            [[ "$iface" == "lo" || "$iface" == "docker0" || "$iface" =~ ^veth ]] && continue
-            rx="${BASH_REMATCH[2]}"
-            tx="${BASH_REMATCH[3]}"
-            if (( rx > 0 || tx > 0 )); then
-                _linux_net_iface="$iface"
-                printf '%s %s %s\n' "$rx" "$tx" "$iface"
+    # Method B: Sysfs network statistics (/sys/class/net/$iface/statistics)
+    if [ -n "$_linux_net_iface" ] && [ -r "/sys/class/net/$_linux_net_iface/statistics/rx_bytes" ]; then
+        { read -r rx < "/sys/class/net/$_linux_net_iface/statistics/rx_bytes"; } 2>/dev/null
+        { read -r tx < "/sys/class/net/$_linux_net_iface/statistics/tx_bytes"; } 2>/dev/null
+        if [[ "$rx" =~ ^[0-9]+$ ]] && [[ "$tx" =~ ^[0-9]+$ ]]; then
+            printf '%s %s %s\n' "$rx" "$tx" "$_linux_net_iface"
+            return 0
+        fi
+    fi
+
+    # Method C: Netlink socket via ip -s link (bypasses /proc/net permissions on restricted kernels)
+    if [ -n "$_linux_net_iface" ] && command -v ip >/dev/null 2>&1; then
+        local ip_stats
+        ip_stats=$(ip -s link show "$_linux_net_iface" 2>/dev/null | awk '/RX:/{getline; print $1} /TX:/{getline; print $1}')
+        if [ -n "$ip_stats" ]; then
+            read -r rx tx <<< "$ip_stats"
+            if [[ "$rx" =~ ^[0-9]+$ ]] && [[ "$tx" =~ ^[0-9]+$ ]]; then
+                printf '%s %s %s\n' "$rx" "$tx" "$_linux_net_iface"
                 return 0
             fi
         fi
-    done < /proc/net/dev
+    fi
 
     return 1
 }
+
 

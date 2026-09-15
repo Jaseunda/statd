@@ -868,8 +868,18 @@ statd_network() {
         iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
         [ -z "$iface" ] && iface="en0"
     else
-        [ -f /proc/net/route ] && iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
-        [ -z "$iface" ] && iface="eth0"
+        [ -r /proc/net/route ] && iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
+        [ -z "$iface" ] && iface=$(ip route show default 2>/dev/null | awk '/default via/{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')
+        [ -z "$iface" ] && iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')
+        if [ -z "$iface" ]; then
+            for _cand in wlan0 rmnet_data0 rmnet0 tun0 eth0 enp0s3; do
+                if [ -d "/sys/class/net/$_cand" ]; then
+                    iface="$_cand"
+                    break
+                fi
+            done
+        fi
+        [ -z "$iface" ] && iface="wlan0"
     fi
 
     local loc_ip="" gw="" dns="" conns="0"
@@ -878,10 +888,15 @@ statd_network() {
         gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
     else
         loc_ip=$(ip -4 addr show "$iface" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
+        [ -z "$loc_ip" ] && loc_ip=$(getprop dhcp.wlan0.ipaddress 2>/dev/null)
         [ -z "$loc_ip" ] && loc_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-        gw=$(ip route show default 2>/dev/null | awk '/default via/{print $3}')
+        gw=$(getprop dhcp.wlan0.gateway 2>/dev/null)
+        [ -z "$gw" ] && gw=$(ip route show default 2>/dev/null | awk '/default via/{print $3}')
+        [ -z "$gw" ] && gw=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") print $(i+1); exit}')
     fi
-    dns=$(awk '/nameserver/{print $2}' /etc/resolv.conf 2>/dev/null | paste -sd, -)
+    dns=$(getprop net.dns1 2>/dev/null)
+    [ -n "$dns" ] && [ -n "$(getprop net.dns2 2>/dev/null)" ] && dns="$dns, $(getprop net.dns2 2>/dev/null)"
+    [ -z "$dns" ] && dns=$(awk '/nameserver/{print $2}' /etc/resolv.conf 2>/dev/null | paste -sd, -)
     conns=$(netstat -an 2>/dev/null | grep -c 'ESTABLISHED' 2>/dev/null || true)
     conns=$(echo "${conns:-0}" | tr -d '[:space:]')
     [[ "$conns" =~ ^[0-9]+$ ]] || conns=0
