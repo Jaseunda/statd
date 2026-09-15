@@ -111,3 +111,13 @@ get_llama_proc_stats() {
         _linux_get_llama_proc_stats "$pid"
     fi
 }
+
+# Returns: <rx_bytes> <tx_bytes> <interface>
+get_network() {
+    if [ "$OS_TYPE" = "macos" ]; then
+        _macos_get_net
+    else
+        _linux_get_net
+    fi
+}
+

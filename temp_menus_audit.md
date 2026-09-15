@@ -40,6 +40,8 @@ DSK  29%                 / 2.34T/8.00T
 ███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░
 LD   11%           3.84 3.42 2.95  96p
 ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+NET  22%   ▼ 43.8K/s  ▲ 187.5K/s   en0
+███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
 ### Hotkeys Available:
@@ -49,6 +51,7 @@ LD   11%           3.84 3.42 2.95  96p
 | `g` | Toggle GPU row |
 | `f`, `w` | Toggle full-width stretch (`-f`) |
 | `l` | Toggle load average row (LD) |
+| `n` | Toggle network throughput row (NET) |
 | `b` | Toggle battery row (BAT) |
 | `s` | Toggle swap row (SWP) |
 | `d` | Toggle disk row (DSK) |

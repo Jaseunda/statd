@@ -219,3 +219,31 @@ _macos_get_gpu() {
     fi
     return 1
 }
+
+# Returns: <rx_bytes> <tx_bytes> <interface>
+_macos_net_iface=""
+_macos_get_net() {
+    # 1. Try finding active default route interface
+    if [ -z "$_macos_net_iface" ]; then
+        _macos_net_iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    fi
+
+    local out
+    if [ -n "$_macos_net_iface" ]; then
+        out=$(netstat -ibn 2>/dev/null | awk -v iface="$_macos_net_iface" '$1 == iface && $3 ~ /<Link/ { print $7, $10; exit }')
+        if [ -n "$out" ]; then
+            printf '%s %s\n' "$out" "$_macos_net_iface"
+            return 0
+        fi
+    fi
+
+    # 2. Fallback: query first active non-loopback link interface
+    out=$(netstat -ibn 2>/dev/null | awk '$1 !~ /^lo/ && $3 ~ /<Link/ && ($7 > 0 || $10 > 0) { print $7, $10, $1; exit }')
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out"
+        return 0
+    fi
+
+    return 1
+}
+

@@ -321,7 +321,7 @@ Usage:
   statd theme status           Show active theme and metric colors
   statd theme set-color <metric> <color>
                                Customize a single metric color
-                               Metrics: cpu, gpu, ram, swp, dsk, ld
+                               Metrics: cpu, gpu, ram, swp, dsk, ld, net
                                 Colors:  cyan, amber, purple, matrix, nord, load, mag,
                                          tokyo, gruvbox, forest, rose, ocean, emerald,
                                          lava, gold, sakura, stealth, glacier, mocha,
@@ -534,8 +534,9 @@ cmd_set_color() {
         swp|swap) var="BAR_MODE_SWP" ;;
         dsk|disk) var="BAR_MODE_DSK" ;;
         ld|load) var="BAR_MODE_LD" ;;
+        net|network) var="BAR_MODE_NET" ;;
         *)
-            printf 'Unknown metric: %s (choose: cpu, gpu, ram, swp, dsk, ld)\n' "$metric" >&2
+            printf 'Unknown metric: %s (choose: cpu, gpu, ram, swp, dsk, ld, net)\n' "$metric" >&2
             return 1
             ;;
     esac

@@ -140,6 +140,7 @@ SHOW_DSK="${SHOW_DSK:-1}"
 SHOW_LD="${SHOW_LD:-1}"
 SHOW_BAT="${SHOW_BAT:-1}"
 SHOW_LLM="${SHOW_LLM:-1}"
+SHOW_NET="${SHOW_NET:-1}"
 
 # Bar color gradient modes (load, cyan, mag, amber, purple, matrix, nord, or custom R1,G1,B1:R2,G2,B2)
 BAR_MODE_CPU="${BAR_MODE_CPU:-load}"
@@ -148,6 +149,7 @@ BAR_MODE_RAM="${BAR_MODE_RAM:-load}"
 BAR_MODE_SWP="${BAR_MODE_SWP:-mag}"
 BAR_MODE_DSK="${BAR_MODE_DSK:-load}"
 BAR_MODE_LD="${BAR_MODE_LD:-load}"
+BAR_MODE_NET="${BAR_MODE_NET:-cyan}"
 
 READ_TIMEOUT="0.1"
 if ! read -t 0.1 _test_to </dev/null 2>/dev/null; then
@@ -184,6 +186,15 @@ DISK_USED=0
 DISK_PCT=0
 UP="--"
 
+PREV_NET_RX=0
+PREV_NET_TX=0
+PREV_NET_TIME=0
+NET_PEAK_BPS=1048576
+NET_RX_RATE=0
+NET_TX_RATE=0
+NET_PCT=""
+NET_IFACE=""
+
 CLK_TCK=$(getconf CLK_TCK 2>/dev/null)
 [[ "$CLK_TCK" =~ ^[0-9]+$ ]] || CLK_TCK=100
 PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null)
@@ -196,6 +207,7 @@ show_help() {
     printf '%b%bUsage:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
     printf '  %bstatd%b [options]\n' "$C_CYAN" "$C_RESET"
     printf '  %bstatd%b %babout%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %bnet%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
     printf '  %bstatd%b %bconfig%b [command]\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
     printf '  %bstatd%b %binstall%b <plugin>\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
     printf '  %bstatd%b %bupdate%b [plugin|all]\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
@@ -212,6 +224,7 @@ show_help() {
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-ram, --no-swp"   "$C_DIM" "Hide RAM or swap rows"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-dsk, --no-ld"    "$C_DIM" "Hide disk or load average rows"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-bat, --no-llm"   "$C_DIM" "Hide battery or LLM inference rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-net"             "$C_DIM" "Hide network throughput row"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "-c, --cores"          "$C_DIM" "Start with per-core CPU sparklines visible"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "-i, --interval <sec>" "$C_DIM" "Refresh interval in seconds (default: 1)"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "-v, --version"        "$C_DIM" "Print version and exit"
@@ -222,6 +235,7 @@ show_help() {
     printf '  %b%-10s%b %s\n' "$C_BOLD" "g"    "$C_DIM" "Toggle GPU row"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "f, w" "$C_DIM" "Toggle full-width stretch"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "l"    "$C_DIM" "Toggle load average row (LD)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "n"    "$C_DIM" "Toggle network row (NET)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "b"    "$C_DIM" "Toggle battery row (BAT)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "s"    "$C_DIM" "Toggle swap row (SWP)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "d"    "$C_DIM" "Toggle disk row (DSK)"
@@ -280,9 +294,10 @@ statd_config() {
                 gpu)         _set_config "SHOW_GPU" "0" ;;
                 ram|mem)     _set_config "SHOW_RAM" "0" ;;
                 llm)         _set_config "SHOW_LLM" "0" ;;
+                net|network) _set_config "SHOW_NET" "0" ;;
                 full|fit)    _set_config "FULL_WIDTH" "0" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, llm, full)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -300,9 +315,10 @@ statd_config() {
                 gpu)         _set_config "SHOW_GPU" "1" ;;
                 ram|mem)     _set_config "SHOW_RAM" "1" ;;
                 llm)         _set_config "SHOW_LLM" "1" ;;
+                net|network) _set_config "SHOW_NET" "1" ;;
                 full|fit)    _set_config "FULL_WIDTH" "1" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, llm, full)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -333,12 +349,13 @@ statd_config() {
             printf 'Views:\n'
             printf '  CPU: %s    GPU: %s    RAM: %s    SWP: %s\n' \
                 "$(_on_off "$SHOW_CPU")" "$(_on_off "$SHOW_GPU")" "$(_on_off "$SHOW_RAM")" "$(_on_off "$SHOW_SWP")"
-            printf '  DSK: %s    LD:  %s    BAT: %s    LLM: %s\n\n' \
-                "$(_on_off "$SHOW_DSK")" "$(_on_off "$SHOW_LD")" "$(_on_off "$SHOW_BAT")" "$(_on_off "$SHOW_LLM")"
+            printf '  DSK: %s    LD:  %s    BAT: %s    NET: %s\n\n' \
+                "$(_on_off "$SHOW_DSK")" "$(_on_off "$SHOW_LD")" "$(_on_off "$SHOW_BAT")" "$(_on_off "$SHOW_NET")"
             printf 'Display:\n'
             printf '  Full Width: %s (auto on <= 50 cols)\n\n' "$(_on_off "$FULL_WIDTH")"
             printf 'Commands:\n'
-            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, gpu, ram, full)\n'
+            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, gpu, ram, net, full)\n'
+            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, gpu, ram, net, full)\n'
             printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, gpu, ram, full)\n'
             printf '  statd config set <KEY> <VAL>  (set any setting, e.g. INTERVAL 2)\n'
             printf '  statd config edit             (open in editor)\n'
@@ -844,6 +861,139 @@ EOF
     return 0
 }
 
+statd_network() {
+    local opt="${1:-}"
+    local iface=""
+    if [ "$OS_TYPE" = "macos" ]; then
+        iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+        [ -z "$iface" ] && iface="en0"
+    else
+        [ -f /proc/net/route ] && iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
+        [ -z "$iface" ] && iface="eth0"
+    fi
+
+    local loc_ip="" gw="" dns="" conns="0"
+    if [ "$OS_TYPE" = "macos" ]; then
+        loc_ip=$(ipconfig getifaddr "$iface" 2>/dev/null || ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2}')
+        gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+    else
+        loc_ip=$(ip -4 addr show "$iface" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
+        [ -z "$loc_ip" ] && loc_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        gw=$(ip route show default 2>/dev/null | awk '/default via/{print $3}')
+    fi
+    dns=$(awk '/nameserver/{print $2}' /etc/resolv.conf 2>/dev/null | paste -sd, -)
+    conns=$(netstat -an 2>/dev/null | grep -c 'ESTABLISHED' 2>/dev/null || true)
+    conns=$(echo "${conns:-0}" | tr -d '[:space:]')
+    [[ "$conns" =~ ^[0-9]+$ ]] || conns=0
+
+    local net_bytes
+    net_bytes=$(get_network 2>/dev/null || true)
+    local rx=0 tx=0
+    if [ -n "$net_bytes" ]; then
+        read -r rx tx _ <<< "$net_bytes"
+    fi
+
+    if [ "$opt" = "--json" ]; then
+        cat <<EOF
+{
+  "network": {
+    "interface": "${iface:-unknown}",
+    "local_ip": "${loc_ip:-unknown}",
+    "gateway": "${gw:-unknown}",
+    "dns": "${dns:-unknown}",
+    "connections": $conns,
+    "rx_bytes": $rx,
+    "tx_bytes": $tx
+  }
+}
+EOF
+        return 0
+    fi
+
+    local interactive=1
+    if [ ! -t 0 ] || [ ! -t 1 ] || [ "$opt" = "--check" ] || [ "$opt" = "-1" ]; then
+        interactive=0
+    fi
+
+    if (( interactive )); then
+        printf '\033[?1049h\033[?25l'
+        trap 'printf "\033[?25h\033[?1049l"; stty sane 2>/dev/null || true' EXIT INT TERM
+        stty -echo icanon min 1 time 0 2>/dev/null || true
+    fi
+
+    local prev_rx=$rx prev_tx=$tx prev_t=$(date +%s%N)
+    local rx_rate=0 tx_rate=0 peak_rate=1048576
+
+    while true; do
+        (( interactive )) && printf '\033[H\033[2J'
+
+        # Refresh throughput
+        net_bytes=$(get_network 2>/dev/null || true)
+        if [ -n "$net_bytes" ]; then
+            read -r cur_rx cur_tx _ <<< "$net_bytes"
+            cur_t=$(date +%s%N)
+            dt_ms=$(( (cur_t - prev_t) / 1000000 ))
+            if (( dt_ms > 100 )); then
+                (( cur_rx >= prev_rx )) && delta_rx=$(( cur_rx - prev_rx )) || delta_rx=0
+                (( cur_tx >= prev_tx )) && delta_tx=$(( cur_tx - prev_tx )) || delta_tx=0
+                rx_rate=$(( delta_rx * 1000 / dt_ms ))
+                tx_rate=$(( delta_tx * 1000 / dt_ms ))
+                tot_rate=$(( rx_rate + tx_rate ))
+                (( tot_rate > peak_rate )) && peak_rate=$tot_rate
+                prev_rx=$cur_rx; prev_tx=$cur_tx; prev_t=$cur_t
+            fi
+        fi
+
+        local rx_pct=0 tx_pct=0
+        if (( peak_rate > 0 )); then
+            rx_pct=$(( rx_rate * 100 / peak_rate ))
+            tx_pct=$(( tx_rate * 100 / peak_rate ))
+            (( rx_pct > 100 )) && rx_pct=100
+            (( tx_pct > 100 )) && tx_pct=100
+        fi
+
+        printf '\n'
+        printf '  \033[1;37mstatd\033[0m \033[1;36mv%s\033[0m — network telemetry & diagnostics\n' "$VERSION"
+        printf '  \033[2mhttps://github.com/Jaseunda/statd\033[0m\n\n'
+
+        printf '  \033[1;34mINTERFACE & CONNECTION\033[0m\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+        printf '  %-14s \033[1m%s\033[0m\n' "Interface" "${iface:-none}"
+        printf '  %-14s %s\n' "Local IP" "${loc_ip:---}"
+        printf '  %-14s %s\n' "Gateway" "${gw:---}"
+        printf '  %-14s %s\n' "DNS" "${dns:---}"
+        printf '  %-14s %s active TCP\n' "Connections" "$conns"
+        printf '\n'
+
+        printf '  \033[1;34mLIVE THROUGHPUT & TRAFFIC\033[0m\n'
+        printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
+        printf '  %-14s %-12s ' "Download (RX)" "▼ $(human "$rx_rate")/s"
+        bar_gradient "$rx_pct" 24 "${BAR_MODE_NET:-cyan}"
+        printf '  \033[2m(%3d%%)\033[0m\n' "$rx_pct"
+        printf '  %-14s %-12s ' "Upload (TX)" "▲ $(human "$tx_rate")/s"
+        bar_gradient "$tx_pct" 24 "${BAR_MODE_NET:-cyan}"
+        printf '  \033[2m(%3d%%)\033[0m\n' "$tx_pct"
+        printf '  %-14s %s down · %s up\n' "Session Total" "$(human "$cur_rx")" "$(human "$cur_tx")"
+        printf '\n'
+
+        if (( ! interactive )); then
+            return 0
+        fi
+
+        printf '  \033[2mPress q to exit  ·  Refresh 1s\033[0m\n'
+
+        local action=""
+        IFS= read -rsn1 -t 1 action 2>/dev/null || true
+        case "$action" in
+            q|Q|$'\e')
+                break
+                ;;
+        esac
+    done
+    return 0
+}
+
+
 # ------------------------------------------------------------
 # Plugin system
 # ------------------------------------------------------------
@@ -1040,6 +1190,11 @@ while [[ $# -gt 0 ]]; do
             printf '     Install it with:  statd install mcp\n\n'
             exit 1
             ;;
+        net|network)
+            shift
+            statd_network "$@"
+            exit $?
+            ;;
         config)
             shift
             statd_config "$@"
@@ -1080,6 +1235,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-ram)
             SHOW_RAM=0
+            shift
+            ;;
+        --no-net|--hide-net)
+            SHOW_NET=0
+            shift
+            ;;
+        --net)
+            SHOW_NET=1
             shift
             ;;
         -u|--update|update)
@@ -1554,6 +1717,43 @@ while true; do
         [[ "$GPU_MEM_TOTAL" =~ ^[0-9]+$ ]] || GPU_MEM_TOTAL=0
     fi
 
+    # ---- Network ----
+    if (( SHOW_NET )); then
+        _net_data=$(get_network 2>/dev/null || true)
+        if [ -n "$_net_data" ]; then
+            read -r _cur_rx _cur_tx _cur_iface <<< "$_net_data"
+            _cur_t=$(date +%s%N)
+            if (( PREV_NET_TIME > 0 && _cur_t > PREV_NET_TIME )); then
+                _dt_ms=$(( (_cur_t - PREV_NET_TIME) / 1000000 ))
+                if (( _dt_ms > 100 )); then
+                    (( _cur_rx >= PREV_NET_RX )) && _delta_rx=$(( _cur_rx - PREV_NET_RX )) || _delta_rx=0
+                    (( _cur_tx >= PREV_NET_TX )) && _delta_tx=$(( _cur_tx - PREV_NET_TX )) || _delta_tx=0
+                    NET_RX_RATE=$(( _delta_rx * 1000 / _dt_ms ))
+                    NET_TX_RATE=$(( _delta_tx * 1000 / _dt_ms ))
+                    _total_rate=$(( NET_RX_RATE + NET_TX_RATE ))
+                    (( _total_rate > NET_PEAK_BPS )) && NET_PEAK_BPS=$_total_rate
+                    if (( NET_PEAK_BPS > 0 )); then
+                        NET_PCT=$(( _total_rate * 100 / NET_PEAK_BPS ))
+                        (( NET_PCT > 100 )) && NET_PCT=100
+                    else
+                        NET_PCT=0
+                    fi
+                    NET_IFACE="$_cur_iface"
+                fi
+            else
+                NET_PCT=0
+                NET_RX_RATE=0
+                NET_TX_RATE=0
+                NET_IFACE="$_cur_iface"
+            fi
+            PREV_NET_RX=$_cur_rx
+            PREV_NET_TX=$_cur_tx
+            PREV_NET_TIME=$_cur_t
+        else
+            NET_PCT=""
+        fi
+    fi
+
     # ============================================================
     # Build frame
     # ============================================================
@@ -1712,6 +1912,28 @@ while true; do
             seg "$_ld_one" "$C_DIM"
         fi
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$LD_PCT"); ROWMODE+=("${BAR_MODE_LD:-load}")
+    fi
+
+    if (( SHOW_NET )) && [[ "$NET_PCT" =~ ^[0-9]+$ ]]; then
+        row_start
+        seg "NET" "$C_BOLD"
+        seg " $(printf '%3d' "$NET_PCT")" "$(pct_color "$NET_PCT")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        _rx_str="▼ $(human "$NET_RX_RATE")/s"
+        _tx_str="▲ $(human "$NET_TX_RATE")/s"
+        _net_full="$_rx_str  $_tx_str  $NET_IFACE"
+        _net_rates="$_rx_str  $_tx_str"
+        _net_rx="▼ $(human "$NET_RX_RATE")/s"
+        if [ -n "$NET_IFACE" ] && (( ${#_net_full} <= AVAIL_R )); then
+            seg "$_net_full" "$C_DIM"
+        elif (( ${#_net_rates} <= AVAIL_R )); then
+            seg "$_net_rates" "$C_DIM"
+        elif (( ${#_net_rx} <= AVAIL_R )); then
+            seg "$_net_rx" "$C_DIM"
+        fi
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$NET_PCT"); ROWMODE+=("${BAR_MODE_NET:-cyan}")
     fi
 
     VALMAX=0
@@ -1963,6 +2185,7 @@ while true; do
             b|B) SHOW_BAT=$(( 1 - SHOW_BAT )); break ;;
             s|S) SHOW_SWP=$(( 1 - SHOW_SWP )); break ;;
             d|D) SHOW_DSK=$(( 1 - SHOW_DSK )); break ;;
+            n|N) SHOW_NET=$(( 1 - SHOW_NET )); break ;;
             "\\") trigger_dance_party; NEED_FULL_REDRAW=1; break ;;
             q|Q) cleanup ;;
         esac

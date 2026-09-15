@@ -253,3 +253,42 @@ _linux_get_gpu() {
 
     return 1
 }
+
+# Returns: <rx_bytes> <tx_bytes> <interface>
+_linux_net_iface=""
+_linux_get_net() {
+    [ -f /proc/net/dev ] || return 1
+
+    # 1. Try finding default route interface if not cached
+    if [ -z "$_linux_net_iface" ] && [ -f /proc/net/route ]; then
+        _linux_net_iface=$(awk '$2 == "00000000" { print $1; exit }' /proc/net/route 2>/dev/null)
+    fi
+
+    local line iface rx tx
+    if [ -n "$_linux_net_iface" ]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*(${_linux_net_iface}):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
+                printf '%s %s %s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$_linux_net_iface"
+                return 0
+            fi
+        done < /proc/net/dev
+    fi
+
+    # 2. Fallback: scan first active non-virtual, non-loopback interface
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*([0-9]+)[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
+            iface="${BASH_REMATCH[1]}"
+            [[ "$iface" == "lo" || "$iface" == "docker0" || "$iface" =~ ^veth ]] && continue
+            rx="${BASH_REMATCH[2]}"
+            tx="${BASH_REMATCH[3]}"
+            if (( rx > 0 || tx > 0 )); then
+                _linux_net_iface="$iface"
+                printf '%s %s %s\n' "$rx" "$tx" "$iface"
+                return 0
+            fi
+        fi
+    done < /proc/net/dev
+
+    return 1
+}
+
