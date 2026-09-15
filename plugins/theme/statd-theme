@@ -225,30 +225,30 @@ CURRENT_LD="${BAR_MODE_LD:-load}"
 
 # Premade theme definitions: <name>|<cpu>|<gpu>|<ram>|<swp>|<dsk>|<ld>|<desc>
 PRESET_THEMES=(
-    "default|load|cyan|load|mag|load|load|Standard StatD (Green load, Cyan GPU, Magenta Swap)"
-    "cyberpunk|amber|cyan|purple|mag|amber|cyan|High-contrast Night City (Amber, Cyan, Hot Pink)"
-    "nord|nord|cyan|nord|mag|nord|cyan|Arctic, Frost blue, and Polar night tones"
-    "dracula|purple|cyan|emerald|mag|amber|purple|Dark fantasy palette (Purple, Cyan, Emerald)"
-    "catppuccin|purple|cyan|amber|mag|nord|purple|Soothing pastel palette (Lavender, Teal, Peach)"
-    "tokyonight|tokyo|cyan|purple|mag|ocean|tokyo|Tokyo nightlife neon (Storm Blue, Cyan, Purple)"
-    "gruvbox|gruvbox|amber|forest|mag|gruvbox|gold|Retro warm groove (Terracotta, Forest, Gold)"
-    "rosepine|rose|cyan|purple|rose|gold|rose|Minimalist elegance (Rosé, Pine, Iris, Foam)"
-    "matrix|matrix|matrix|matrix|matrix|matrix|matrix|Pure terminal lime, emerald, and dark green"
-    "solarized|cyan|ocean|gold|mag|ocean|cyan|Precision Solarized palette (Cyan, Blue, Amber)"
-    "oceanic|ocean|cyan|nord|ocean|cyan|ocean|Deep ocean abyss (Marine Blue, Aqua, Sapphire)"
-    "sunset|amber|purple|amber|mag|lava|purple|Fiery sunset gradient (Crimson, Orange, Violet)"
-    "crimson|lava|amber|lava|mag|lava|amber|Molten volcano (Blood Red, Ruby, Scarlet)"
-    "emerald|emerald|matrix|emerald|forest|matrix|emerald|Lush jade and forest greenery (Mint, Jade, Moss)"
-    "sakura|sakura|rose|purple|sakura|rose|sakura|Japanese cherry blossom (Petal Pink, Blush, Coral)"
-    "monokai|load|cyan|purple|mag|amber|load|Vibrant coding palette (Lime, Cyan, Magenta)"
-    "synthwave|purple|cyan|mag|purple|cyan|mag|80s retro neon aesthetic (Hot Pink, Neon Cyan)"
-    "stealth|stealth|nord|stealth|stealth|nord|stealth|Monochrome minimal blackout (Slate, Silver, White)"
-    "glacier|glacier|cyan|glacier|nord|ocean|glacier|Crystalline arctic ice (Glacier, Frost, Deep Blue)"
-    "mocha|mocha|amber|mocha|gold|gruvbox|mocha|Warm cozy espresso & caramel (Mocha, Honey, Amber)"
-    "amethyst|amethyst|rose|amethyst|purple|amethyst|rose|Mystic royal gemstones (Violet, Orchid, Lavender)"
-    "flame|flame|amber|lava|gold|flame|lava|Burning solar flare (Golden Blaze, Flame, Lava)"
-    "miami|cyan|rose|purple|mag|gold|cyan|Sun-drenched South Beach Vice (Turquoise, Hot Pink, Gold)"
-    "matcha|forest|emerald|forest|gold|matrix|emerald|Zen Japanese tea garden (Matcha, Jade, Bamboo)"
+    "default|load|cyan|load|mag|load|load|Standard StatD (Green, Cyan, Magenta)"
+    "cyberpunk|amber|cyan|purple|mag|amber|cyan|Night City (Amber, Cyan, Hot Pink)"
+    "nord|nord|cyan|nord|mag|nord|cyan|Arctic frost blue & polar night"
+    "dracula|purple|cyan|emerald|mag|amber|purple|Dark fantasy (Purple, Cyan, Emerald)"
+    "catppuccin|purple|cyan|amber|mag|nord|purple|Soothing pastel (Lavender, Teal, Peach)"
+    "tokyonight|tokyo|cyan|purple|mag|ocean|tokyo|Tokyo nightlife neon (Storm Blue, Cyan)"
+    "gruvbox|gruvbox|amber|forest|mag|gruvbox|gold|Retro warm groove (Terracotta, Gold)"
+    "rosepine|rose|cyan|purple|rose|gold|rose|Minimalist elegance (Rosé, Pine, Iris)"
+    "matrix|matrix|matrix|matrix|matrix|matrix|matrix|Pure terminal lime & dark green"
+    "solarized|cyan|ocean|gold|mag|ocean|cyan|Solarized precision (Cyan, Blue, Amber)"
+    "oceanic|ocean|cyan|nord|ocean|cyan|ocean|Deep ocean abyss (Marine Blue, Aqua)"
+    "sunset|amber|purple|amber|mag|lava|purple|Fiery sunset (Crimson, Orange, Violet)"
+    "crimson|lava|amber|lava|mag|lava|amber|Molten volcano (Blood Red, Scarlet)"
+    "emerald|emerald|matrix|emerald|forest|matrix|emerald|Lush jade & forest greenery"
+    "sakura|sakura|rose|purple|sakura|rose|sakura|Japanese cherry blossom (Pink, Blush)"
+    "monokai|load|cyan|purple|mag|amber|load|Vibrant coding (Lime, Cyan, Magenta)"
+    "synthwave|purple|cyan|mag|purple|cyan|mag|80s retro neon (Hot Pink, Neon Cyan)"
+    "stealth|stealth|nord|stealth|stealth|nord|stealth|Monochrome blackout (Slate, Silver)"
+    "glacier|glacier|cyan|glacier|nord|ocean|glacier|Crystalline arctic ice (Glacier, Frost)"
+    "mocha|mocha|amber|mocha|gold|gruvbox|mocha|Warm cozy espresso & caramel"
+    "amethyst|amethyst|rose|amethyst|purple|amethyst|rose|Mystic royal gemstones (Violet, Orchid)"
+    "flame|flame|amber|lava|gold|flame|lava|Burning solar flare (Golden, Lava)"
+    "miami|cyan|rose|purple|mag|gold|cyan|South Beach Vice (Turquoise, Hot Pink)"
+    "matcha|forest|emerald|forest|gold|matrix|emerald|Zen Japanese tea garden (Matcha, Jade)"
 )
 
 # Set variable in config file
@@ -741,11 +741,9 @@ interactive_picker() {
         # Move cursor home and clear
         printf '\033[H\033[2J'
 
-        # Banner
-        printf '\033[1;36m  ┌─────────────────────────────────────────────────────────────┐\033[0m\n'
-        printf '\033[1;36m  │\033[0m                    \033[1mStatD Theme Selector\033[0m                     \033[1;36m│\033[0m\n'
-        printf '\033[1;36m  │\033[0m    \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m    \033[1;36m│\033[0m\n'
-        printf '\033[1;36m  └─────────────────────────────────────────────────────────────┘\033[0m\n\n'
+        # Header
+        printf '\n  \033[1;37mStatD Theme Selector\033[0m\n'
+        printf '  \033[2m↑/↓ or j/k to browse  ·  Enter to apply  ·  q to exit\033[0m\n\n'
 
         # List themes with cursor indicator (windowed for terminal height)
         local term_lines=$(tput lines 2>/dev/null || echo 24)
@@ -767,14 +765,23 @@ interactive_picker() {
         for (( i=win_start; i<win_end; i++ )); do
             IFS='|' read -r t_name t_cpu t_gpu t_ram t_swp t_dsk t_ld t_desc t_type <<< "${items[i]}"
             local active_tag=""
+            local pfx_w=18
             if [ "$t_name" = "$CURRENT_THEME" ]; then
                 active_tag="\033[32m [active]\033[0m"
+                pfx_w=27
+            fi
+
+            # Keep description inside the 65-column box boundary (max column 64)
+            local max_desc_w=$(( 64 - pfx_w ))
+            local disp_desc="$t_desc"
+            if (( ${#disp_desc} > max_desc_w )); then
+                disp_desc="${disp_desc:0:$(( max_desc_w - 1 ))}…"
             fi
 
             if (( i == cur_idx )); then
-                printf '  \033[1;36m▸ \033[1;37m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$t_desc"
+                printf '  \033[1;36m▸ \033[1;37m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$disp_desc"
             else
-                printf '    \033[2m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$t_desc"
+                printf '    \033[2m%-11s\033[0m%b \033[2m— %s\033[0m\n' "$t_name" "$active_tag" "$disp_desc"
             fi
         done
 

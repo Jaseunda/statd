@@ -5,7 +5,11 @@ A minimal, flicker-free system stats HUD for your terminal.
 No heavy frameworks. No compiling. Just launch and go.
 
 <p align="center">
-  <img src="assets/statd.png" alt="statd" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/statd-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/statd-light.png">
+    <img src="assets/statd.png" alt="statd" width="100%">
+  </picture>
 </p>
 
 ## Install

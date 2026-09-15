@@ -190,63 +190,60 @@ PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null)
 [[ "$PAGE_SIZE" =~ ^[0-9]+$ ]] || PAGE_SIZE=4096
 
 show_help() {
-    cat <<EOF
-statd $VERSION — terminal system stats HUD
-https://github.com/Jaseunda/statd
+    printf '%bstatd %s%b — terminal system stats HUD\n' "$C_BOLD" "$VERSION" "$C_RESET"
+    printf '%bhttps://github.com/Jaseunda/statd%b\n\n' "$C_DIM" "$C_RESET"
 
-Usage:
-  statd [options]
-  statd about
-  statd config [command]
-  statd install <plugin>
-  statd update [plugin|all]
-  statd plugins [command]
-  statd <plugin> [options]
+    printf '%b%bUsage:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+    printf '  %bstatd%b [options]\n' "$C_CYAN" "$C_RESET"
+    printf '  %bstatd%b %babout%b\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %bconfig%b [command]\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %binstall%b <plugin>\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %bupdate%b [plugin|all]\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %bplugins%b [command]\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %bstatd%b %b<plugin>%b [options]\n\n' "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
 
-Options:
-  -f, --full           Stretch to fill terminal width (auto on mini displays)
-  -a, --about          Show system info, versions, and one-click updater
-  -u, --update         Check for and install the latest update
-  --check-update       Check if an update is available without installing
-  --config [cmd]       Manage view toggles and settings (or: statd config)
-  --no-ld              Hide load average row
-  --no-bat             Hide battery row
-  --no-swp             Hide swap row
-  --no-dsk             Hide disk row
-  --no-cpu             Hide CPU row
-  --no-gpu             Hide GPU row
-  --no-ram             Hide RAM row
-  -c, --cores          Start with per-core CPU panel visible
-  -i, --interval <sec> Refresh interval in seconds (default: 1)
-  -v, --version        Print version and exit
-  -h, --help           Show this help message
+    printf '%b%bOptions:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-f, --full"           "$C_DIM" "Stretch to fill terminal width (auto on mini displays)"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-a, --about"          "$C_DIM" "Show system info, versions, and one-click updater"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-u, --update"         "$C_DIM" "Check for and install the latest update"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--check-update"       "$C_DIM" "Check if an update is available without installing"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--config [cmd]"       "$C_DIM" "Manage view toggles and settings (or: statd config)"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-cpu, --no-gpu"   "$C_DIM" "Hide CPU or GPU rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-ram, --no-swp"   "$C_DIM" "Hide RAM or swap rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-dsk, --no-ld"    "$C_DIM" "Hide disk or load average rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-bat, --no-llm"   "$C_DIM" "Hide battery or LLM inference rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-c, --cores"          "$C_DIM" "Start with per-core CPU sparklines visible"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-i, --interval <sec>" "$C_DIM" "Refresh interval in seconds (default: 1)"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "-v, --version"        "$C_DIM" "Print version and exit"
+    printf '  %b%-22s%b %s\n\n' "$C_CYAN" "-h, --help"           "$C_DIM" "Show this help message"
 
-Interactive Controls:
-  c                    Toggle per-core CPU panel
-  g                    Toggle GPU row
-  f, w                 Toggle full-width stretch
-  l                    Toggle load average row (LD)
-  b                    Toggle battery row (BAT)
-  s                    Toggle swap row (SWP)
-  d                    Toggle disk row (DSK)
-  q                    Quit
+    printf '%b%bInteractive Controls:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "c"    "$C_DIM" "Toggle per-core CPU sparklines"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "g"    "$C_DIM" "Toggle GPU row"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "f, w" "$C_DIM" "Toggle full-width stretch"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "l"    "$C_DIM" "Toggle load average row (LD)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "b"    "$C_DIM" "Toggle battery row (BAT)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "s"    "$C_DIM" "Toggle swap row (SWP)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "d"    "$C_DIM" "Toggle disk row (DSK)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "q"    "$C_DIM" "Quit HUD"
+    printf '\n'
 
-Plugin Commands:
-  statd install <name>          Install plugin (e.g.: statd install api)
-  statd remove <name>           Uninstall plugin
-  statd plugins                 List available and installed plugins
-  statd plugins update [name]   Update installed plugin (or all plugins)
-  statd api [options]           Start API server (requires api plugin)
-  statd theme [options]         Manage themes (requires theme plugin)
-  statd mcp [options]           Model Context Protocol server (requires mcp plugin)
+    printf '%b%bPlugin Commands:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd install <name>"        "$C_DIM" "Install an official plugin (e.g. api, theme)"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd remove <name>"         "$C_DIM" "Uninstall an installed plugin"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd plugins"               "$C_DIM" "List available and installed plugins"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd plugins update [name]" "$C_DIM" "Update installed plugin (or all plugins)"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd api [options]"         "$C_DIM" "Start HTTP metrics API server"
+    printf '  %b%-26s%b %s\n' "$C_CYAN" "statd theme [options]"       "$C_DIM" "Manage color themes & palette"
+    printf '  %b%-26s%b %s\n\n' "$C_CYAN" "statd mcp [options]"         "$C_DIM" "Model Context Protocol server for AI"
 
-Config Commands:
-  statd config                  Show current view settings
-  statd config disable <view>   Turn off view (ld, bat, swp, dsk, cpu, gpu, ram)
-  statd config enable <view>    Turn on view
-  statd config edit             Edit configuration in \$EDITOR
-  statd config reset            Reset to defaults
-EOF
+    printf '%b%bConfig Commands:%b\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+    printf '  %b%-28s%b %s\n' "$C_CYAN" "statd config"                "$C_DIM" "Show current view settings"
+    printf '  %b%-28s%b %s\n' "$C_CYAN" "statd config disable <view>" "$C_DIM" "Turn off view (cpu, gpu, ram, swp, dsk, ld)"
+    printf '  %b%-28s%b %s\n' "$C_CYAN" "statd config enable <view>"  "$C_DIM" "Turn on view"
+    printf '  %b%-28s%b %s\n' "$C_CYAN" "statd config edit"           "$C_DIM" "Edit configuration in \$EDITOR"
+    printf '  %b%-28s%b %s\n' "$C_CYAN" "statd config reset"          "$C_DIM" "Reset configuration to defaults"
+    printf '%b' "$C_RESET"
 }
 
 _on_off() {
@@ -713,10 +710,8 @@ EOF
         (( interactive )) && printf '\033[H\033[2J'
 
         printf '\n'
-        printf '\033[1;36m  ┌─────────────────────────────────────────────────────────────┐\033[0m\n'
-        printf '\033[1;36m  │\033[0m   \033[1;37mStatD\033[0m — Terminal System Stats & Hardware Monitor HUD      \033[1;36m│\033[0m\n'
-        printf '\033[1;36m  │\033[0m   \033[2mhttps://github.com/Jaseunda/statd\033[0m                         \033[1;36m│\033[0m\n'
-        printf '\033[1;36m  └─────────────────────────────────────────────────────────────┘\033[0m\n\n'
+        printf '  \033[1;37mstatd\033[0m \033[1;36mv%s\033[0m — terminal system stats HUD\n' "$VERSION"
+        printf '  \033[2mhttps://github.com/Jaseunda/statd\033[0m\n\n'
 
         printf '  \033[1;34mCORE & SYSTEM\033[0m\n'
         printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
