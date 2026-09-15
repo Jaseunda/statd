@@ -94,6 +94,12 @@ get_disk() {
     df -k "$HOME" 2>/dev/null | awk 'NR==2 { printf "%.0f %.0f\n", $2*1024, $3*1024 }'
 }
 
+# Returns: <used_bytes> <total_bytes> for the workload backing pool.
+# This is a disk-backed capacity tier, separate from physical RAM and kernel swap.
+get_workload_pool() {
+    if [ "$OS_TYPE" = "macos" ]; then _macos_get_workload_pool; else _linux_get_workload_pool; fi
+}
+
 # find_llama_pid — returns PID of a running llama process, or empty.
 find_llama_pid() {
     if [ "$OS_TYPE" = "macos" ]; then _macos_find_llama_pid; else _linux_find_llama_pid; fi

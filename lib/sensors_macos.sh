@@ -117,6 +117,44 @@ _macos_get_memory() {
         $(( swap_used_bytes  / 1024 ))
 }
 
+# Returns: <used_bytes> <total_bytes> for the workload backing pool.
+# Same logic as the Linux version: measures a local or remote (SSH) pool
+# directory. The pool is a disk-backed capacity tier — never kernel swap.
+_macos_get_workload_pool() {
+    local dir="${WORKLOAD_POOL_DIR:-}"
+    local cap_gb="${WORKLOAD_POOL_CAP_GB:-32}"
+    local cap_bytes=$(( cap_gb * 1024 * 1024 * 1024 ))
+    local used_bytes=0
+
+    if [ -n "$dir" ] && [ -d "$dir" ]; then
+        used_bytes=$(du -sx "$dir" 2>/dev/null | awk '{print $1 * 512}')
+        [ -z "$used_bytes" ] && used_bytes=0
+    fi
+
+    # Remote SSH fetch (same approach as Linux)
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        local host="${WORKLOAD_POOL_HOST:-}"
+        local port="${WORKLOAD_POOL_SSH_PORT:-22}"
+        if [ -n "$host" ] && command -v ssh >/dev/null 2>&1; then
+            local remote_out
+            remote_out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" \
+                "$host" '
+                POOL="${WORKLOAD_POOL_DIR:-$HOME/storage/shared/workload-pool}"
+                CAP_GB="${WORKLOAD_POOL_CAP_GB:-32}"
+                echo "$CAP_GB $(du -sb \"$POOL\" 2>/dev/null | awk "{print \$1}")"
+                ' 2>/dev/null || true)
+            if [ -n "$remote_out" ]; then
+                cap_gb=$(echo "$remote_out" | awk '{print $1}')
+                used_bytes=$(echo "$remote_out" | awk '{print $2}')
+                cap_bytes=$(( cap_gb * 1024 * 1024 * 1024 ))
+                [ -z "$used_bytes" ] && used_bytes=0
+            fi
+        fi
+    fi
+
+    printf '%d %d\n' "$used_bytes" "$cap_bytes"
+}
+
 # Returns: <pct> <status-string>  or empty if no battery.
 _macos_get_battery() {
     local line pct state status

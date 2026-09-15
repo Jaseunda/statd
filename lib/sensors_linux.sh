@@ -99,6 +99,51 @@ _linux_get_memory() {
         "$(( swap_total - swap_free ))"
 }
 
+# Returns: <used_bytes> <total_bytes> for the workload backing pool.
+# The pool is a disk-backed directory whose size represents additional
+# capacity for background workloads — never conflated with physical RAM
+# or kernel swap in the UI.
+# Configurable via WORKLOAD_POOL_DIR (local path) or WORKLOAD_POOL_HOST +
+# WORKLOAD_POOL_SSH_PORT (remote SSH fetch). WORKLOAD_POOL_CAP_GB sets
+# the hard cap (default 32). Returns "0 0" if no pool is configured/available.
+_linux_get_workload_pool() {
+    local dir="${WORKLOAD_POOL_DIR:-}"
+    local cap_gb="${WORKLOAD_POOL_CAP_GB:-32}"
+    local cap_bytes=$(( cap_gb * 1024 * 1024 * 1024 ))
+    local used_bytes=0
+
+    # --- 1. Local directory path ---
+    if [ -n "$dir" ] && [ -d "$dir" ]; then
+        used_bytes=$(du -sb "$dir" 2>/dev/null | awk '{print $1}')
+        [ -z "$used_bytes" ] && used_bytes=0
+    fi
+
+    # --- 2. Remote SSH fetch (fallback when no local dir configured) ---
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        local host="${WORKLOAD_POOL_HOST:-}"
+        local port="${WORKLOAD_POOL_SSH_PORT:-22}"
+        if [ -n "$host" ] && command -v ssh >/dev/null 2>&1; then
+            # Fetch pool path and cap from the remote f3s-memmgr.conf,
+            # then measure du -sb on the remote pool directory.
+            local remote_out
+            remote_out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" \
+                "$host" '
+                POOL="${WORKLOAD_POOL_DIR:-$HOME/storage/shared/workload-pool}"
+                CAP_GB="${WORKLOAD_POOL_CAP_GB:-32}"
+                echo "$CAP_GB $(du -sb \"$POOL\" 2>/dev/null | awk "{print \$1}")"
+                ' 2>/dev/null || true)
+            if [ -n "$remote_out" ]; then
+                cap_gb=$(echo "$remote_out" | awk '{print $1}')
+                used_bytes=$(echo "$remote_out" | awk '{print $2}')
+                cap_bytes=$(( cap_gb * 1024 * 1024 * 1024 ))
+                [ -z "$used_bytes" ] && used_bytes=0
+            fi
+        fi
+    fi
+
+    printf '%d %d\n' "$used_bytes" "$cap_bytes"
+}
+
 # Returns: <pct> <status-string>  or empty if no battery.
 _linux_get_battery() {
     # upower (desktop Linux, most distributions)

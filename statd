@@ -100,6 +100,7 @@ SHOW_CPU=1
 SHOW_GPU=1
 SHOW_RAM=1
 SHOW_SWP=1
+SHOW_POOL=0
 SHOW_DSK=1
 SHOW_LD=1
 SHOW_BAT=1
@@ -136,6 +137,7 @@ SHOW_CPU="${SHOW_CPU:-1}"
 SHOW_GPU="${SHOW_GPU:-1}"
 SHOW_RAM="${SHOW_RAM:-1}"
 SHOW_SWP="${SHOW_SWP:-1}"
+SHOW_POOL="${SHOW_POOL:-0}"
 SHOW_DSK="${SHOW_DSK:-1}"
 SHOW_LD="${SHOW_LD:-1}"
 SHOW_BAT="${SHOW_BAT:-1}"
@@ -147,9 +149,19 @@ BAR_MODE_CPU="${BAR_MODE_CPU:-load}"
 BAR_MODE_GPU="${BAR_MODE_GPU:-cyan}"
 BAR_MODE_RAM="${BAR_MODE_RAM:-load}"
 BAR_MODE_SWP="${BAR_MODE_SWP:-mag}"
+BAR_MODE_POOL="${BAR_MODE_POOL:-amber}"
 BAR_MODE_DSK="${BAR_MODE_DSK:-load}"
 BAR_MODE_LD="${BAR_MODE_LD:-load}"
 BAR_MODE_NET="${BAR_MODE_NET:-cyan}"
+
+# Workload pool configuration (optional — shows a disk-backed capacity tier
+# separate from physical RAM and kernel swap). Leave WORKLOAD_POOL_DIR empty
+# to auto-detect, or set WORKLOAD_POOL_HOST to fetch from a remote server.
+WORKLOAD_POOL_DIR="${WORKLOAD_POOL_DIR:-}"
+WORKLOAD_POOL_CAP_GB="${WORKLOAD_POOL_CAP_GB:-32}"
+WORKLOAD_POOL_HOST="${WORKLOAD_POOL_HOST:-}"
+WORKLOAD_POOL_SSH_PORT="${WORKLOAD_POOL_SSH_PORT:-22}"
+WORKLOAD_POOL_LABEL="${WORKLOAD_POOL_LABEL:-WLP}"
 
 READ_TIMEOUT="0.1"
 if ! read -t 0.1 _test_to </dev/null 2>/dev/null; then
@@ -184,6 +196,9 @@ BATT_STATUS=""
 DISK_TOTAL=0
 DISK_USED=0
 DISK_PCT=0
+POOL_USED_B=0
+POOL_TOTAL_B=0
+POOL_PCT=0
 UP="--"
 
 PREV_NET_RX=0
@@ -222,6 +237,7 @@ show_help() {
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--config [cmd]"       "$C_DIM" "Manage view toggles and settings (or: statd config)"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-cpu, --no-gpu"   "$C_DIM" "Hide CPU or GPU rows"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-ram, --no-swp"   "$C_DIM" "Hide RAM or swap rows"
+    printf '  %b%-22s%b %s\n' "$C_CYAN" "--pool, --no-pool"    "$C_DIM" "Show/hide workload backing pool row"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-dsk, --no-ld"    "$C_DIM" "Hide disk or load average rows"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-bat, --no-llm"   "$C_DIM" "Hide battery or LLM inference rows"
     printf '  %b%-22s%b %s\n' "$C_CYAN" "--no-net"             "$C_DIM" "Hide network throughput row"
@@ -238,6 +254,7 @@ show_help() {
     printf '  %b%-10s%b %s\n' "$C_BOLD" "n"    "$C_DIM" "Toggle network row (NET)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "b"    "$C_DIM" "Toggle battery row (BAT)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "s"    "$C_DIM" "Toggle swap row (SWP)"
+    printf '  %b%-10s%b %s\n' "$C_BOLD" "p"    "$C_DIM" "Toggle workload pool row (WLP)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "d"    "$C_DIM" "Toggle disk row (DSK)"
     printf '  %b%-10s%b %s\n' "$C_BOLD" "q"    "$C_DIM" "Quit HUD"
     printf '\n'
@@ -293,11 +310,12 @@ statd_config() {
                 cpu)         _set_config "SHOW_CPU" "0" ;;
                 gpu)         _set_config "SHOW_GPU" "0" ;;
                 ram|mem)     _set_config "SHOW_RAM" "0" ;;
+                pool|wlp)    _set_config "SHOW_POOL" "0" ;;
                 llm)         _set_config "SHOW_LLM" "0" ;;
                 net|network) _set_config "SHOW_NET" "0" ;;
                 full|fit)    _set_config "FULL_WIDTH" "0" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, pool, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -314,11 +332,12 @@ statd_config() {
                 cpu)         _set_config "SHOW_CPU" "1" ;;
                 gpu)         _set_config "SHOW_GPU" "1" ;;
                 ram|mem)     _set_config "SHOW_RAM" "1" ;;
+                pool|wlp)    _set_config "SHOW_POOL" "1" ;;
                 llm)         _set_config "SHOW_LLM" "1" ;;
                 net|network) _set_config "SHOW_NET" "1" ;;
                 full|fit)    _set_config "FULL_WIDTH" "1" ;;
                 *)
-                    printf 'Unknown view: %s (choose: ld, bat, swp, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
+                    printf 'Unknown view: %s (choose: ld, bat, swp, pool, dsk, cpu, gpu, ram, net, llm, full)\n' "$target" >&2
                     return 1
                     ;;
             esac
@@ -349,14 +368,14 @@ statd_config() {
             printf 'Views:\n'
             printf '  CPU: %s    GPU: %s    RAM: %s    SWP: %s\n' \
                 "$(_on_off "$SHOW_CPU")" "$(_on_off "$SHOW_GPU")" "$(_on_off "$SHOW_RAM")" "$(_on_off "$SHOW_SWP")"
-            printf '  DSK: %s    LD:  %s    BAT: %s    NET: %s\n\n' \
+            printf '  DSK: %s    LD:  %s    BAT: %s    NET: %s\n' \
                 "$(_on_off "$SHOW_DSK")" "$(_on_off "$SHOW_LD")" "$(_on_off "$SHOW_BAT")" "$(_on_off "$SHOW_NET")"
+            printf '  WLP: %s\n\n' "$(_on_off "$SHOW_POOL")"
             printf 'Display:\n'
             printf '  Full Width: %s (auto on <= 50 cols)\n\n' "$(_on_off "$FULL_WIDTH")"
             printf 'Commands:\n'
-            printf '  statd config disable <view>   (turn off view: ld, bat, swp, dsk, cpu, gpu, ram, net, full)\n'
-            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, gpu, ram, net, full)\n'
-            printf '  statd config enable <view>    (turn on view: ld, bat, swp, dsk, cpu, gpu, ram, full)\n'
+            printf '  statd config disable <view>   (turn off view: ld, bat, swp, pool, dsk, cpu, gpu, ram, net, full)\n'
+            printf '  statd config enable <view>    (turn on view: ld, bat, swp, pool, dsk, cpu, gpu, ram, net, full)\n'
             printf '  statd config set <KEY> <VAL>  (set any setting, e.g. INTERVAL 2)\n'
             printf '  statd config edit             (open in editor)\n'
             printf '  statd config reset            (reset to defaults)\n'
@@ -1267,6 +1286,14 @@ while [[ $# -gt 0 ]]; do
             SHOW_RAM=0
             shift
             ;;
+        --pool)
+            SHOW_POOL=1
+            shift
+            ;;
+        --no-pool|--hide-pool)
+            SHOW_POOL=0
+            shift
+            ;;
         --no-net|--hide-net)
             SHOW_NET=0
             shift
@@ -1557,6 +1584,12 @@ while true; do
     SWAP_USED_B=$(( SWAP_USED  * 1024 ))
     (( MEM_TOTAL  > 0 )) && MEM_PCT=$(( MEM_USED  * 100 / MEM_TOTAL  )) || MEM_PCT=0
     (( SWAP_TOTAL > 0 )) && SWAP_PCT=$(( SWAP_USED * 100 / SWAP_TOTAL )) || SWAP_PCT=0
+
+    # ---- Workload backing pool ----
+    read -r POOL_USED_B POOL_TOTAL_B <<< "$(get_workload_pool)"
+    [[ "$POOL_TOTAL_B" =~ ^[0-9]+$ ]] || POOL_TOTAL_B=0
+    [[ "$POOL_USED_B"  =~ ^[0-9]+$ ]] || POOL_USED_B=0
+    (( POOL_TOTAL_B  > 0 )) && POOL_PCT=$(( POOL_USED_B * 100 / POOL_TOTAL_B )) || POOL_PCT=0
 
     # ---- Timing ----
     NOW=$(date +%s%N)
@@ -1904,6 +1937,23 @@ while true; do
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("${BAR_MODE_SWP:-mag}")
     fi
 
+    if (( SHOW_POOL )); then
+        row_start
+        seg "${WORKLOAD_POOL_LABEL}" "$C_BOLD"
+        seg " $(printf '%3d' "$POOL_PCT")" "$(pct_color "$POOL_PCT")"
+        seg "%  " ""
+        LEFTP+=("$ROW_PLAIN"); LEFTC+=("$ROW_COLORED")
+        row_start
+        _pool_full="$(human "$POOL_USED_B")/$(human "$POOL_TOTAL_B")"
+        _pool_used="$(human "$POOL_USED_B")"
+        if (( ${#_pool_full} <= AVAIL_R )); then
+            seg "$_pool_full" "$C_DIM"
+        elif (( ${#_pool_used} <= AVAIL_R )); then
+            seg "$_pool_used" "$C_DIM"
+        fi
+        VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$POOL_PCT"); ROWMODE+=("${BAR_MODE_POOL:-amber}")
+    fi
+
     if (( SHOW_DSK )); then
         row_start
         seg "DSK" "$C_BOLD"
@@ -2214,6 +2264,7 @@ while true; do
             l|L) SHOW_LD=$(( 1 - SHOW_LD )); break ;;
             b|B) SHOW_BAT=$(( 1 - SHOW_BAT )); break ;;
             s|S) SHOW_SWP=$(( 1 - SHOW_SWP )); break ;;
+            p|P) SHOW_POOL=$(( 1 - SHOW_POOL )); break ;;
             d|D) SHOW_DSK=$(( 1 - SHOW_DSK )); break ;;
             n|N) SHOW_NET=$(( 1 - SHOW_NET )); break ;;
             "\\") trigger_dance_party; NEED_FULL_REDRAW=1; break ;;
