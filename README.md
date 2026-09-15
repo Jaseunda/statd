@@ -85,6 +85,7 @@ StatD keeps the terminal HUD minimal, lightweight, and bloat-free, while providi
 
 | Plugin | Command | Description | Documentation |
 |--------|---------|-------------|---------------|
+| **Float** | `statd float` | Frameless, always-on-top floating desktop HUD (60–120 FPS, draggable, dynamic height) | [Float Plugin Guide](plugins/float/README.md) |
 | **Theme** | `statd theme` | 32 curated color palettes (light & dark mode ready), live interactive picker, custom RGB | [Theme Plugin Guide](plugins/theme/README.md) |
 | **API** | `statd api` | Ultra-low CPU HTTP server with JSON snapshots & Server-Sent Events (SSE) streaming | [API Plugin Guide](plugins/api/README.md) |
 | **MCP** | `statd mcp` | Model Context Protocol server for AI coding assistants (Claude, Cursor, Antigravity) | [MCP Plugin Guide](plugins/mcp/README.md) |
@@ -96,6 +97,7 @@ StatD keeps the terminal HUD minimal, lightweight, and bloat-free, while providi
 statd plugins
 
 # Install an official plugin
+statd install float
 statd install theme
 statd install api
 statd install mcp

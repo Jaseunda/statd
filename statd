@@ -650,6 +650,9 @@ statd_about() {
         local mcp_ver=$(get_plugin_version "mcp" 2>/dev/null || echo "")
         local mcp_bin=$(find_plugin_bin "mcp" 2>/dev/null || echo "")
         local mcp_remote=$(get_remote_plugin_version "mcp" 2>/dev/null || echo "")
+        local float_ver=$(get_plugin_version "float" 2>/dev/null || echo "")
+        local float_bin=$(find_plugin_bin "float" 2>/dev/null || echo "")
+        local float_remote=$(get_remote_plugin_version "float" 2>/dev/null || echo "")
         cat <<EOF
 {
   "statd": {
@@ -677,6 +680,12 @@ statd_about() {
       "version": "${mcp_ver:-null}",
       "latest": "${mcp_remote:-null}",
       "path": "${mcp_bin:-null}"
+    },
+    "float": {
+      "installed": $([ -n "$float_bin" ] && echo true || echo false),
+      "version": "${float_ver:-null}",
+      "latest": "${float_remote:-null}",
+      "path": "${float_bin:-null}"
     }
   }
 }
@@ -742,7 +751,7 @@ EOF
         printf '  \033[2m─────────────────────────────────────────────────────────────\033[0m\n'
 
         # Only list plugins that are actually installed
-        local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants")
+        local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants" "float|Frameless always-on-top floating desktop HUD (GUI)")
         local installed_names=()
         local installed_descs=()
         local installed_vers=()
@@ -1040,6 +1049,7 @@ statd_plugin_install() {
         printf '  api      Lightweight HTTP JSON & SSE metrics streaming API\n'
         printf '  theme    Color themes & custom palette manager\n'
         printf '  mcp      Model Context Protocol server for AI coding assistants\n'
+        printf '  float    Frameless always-on-top floating desktop HUD (GUI)\n'
         return 1
     fi
 
@@ -1107,7 +1117,7 @@ statd_plugin_remove() {
 
 statd_plugin_list() {
     printf '\n  \033[1mStatD Plugins\033[0m\n\n'
-    local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants")
+    local known=("theme|Color themes & custom palette manager" "api|Lightweight HTTP JSON & SSE metrics streaming API" "mcp|Model Context Protocol server for AI coding assistants" "float|Frameless always-on-top floating desktop HUD (GUI)")
     local item
     for item in "${known[@]}"; do
         IFS='|' read -r p_name p_desc <<< "$item"
@@ -1203,6 +1213,11 @@ while [[ $# -gt 0 ]]; do
         mcp)
             printf '  \033[33m!\033[0m  Plugin "mcp" is not installed.\n'
             printf '     Install it with:  statd install mcp\n\n'
+            exit 1
+            ;;
+        float)
+            printf '  \033[33m!\033[0m  Plugin "float" is not installed.\n'
+            printf '     Install it with:  statd install float\n\n'
             exit 1
             ;;
         net|network)

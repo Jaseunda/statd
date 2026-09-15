@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# statd-float — Frameless always-on-top floating desktop HUD for StatD
+# Part of StatD: https://github.com/Jaseunda/statd
+
+set -eo pipefail
+
+VERSION="0.1.1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/statd"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/statd"
+PID_FILE="$CONFIG_DIR/statd-float.pid"
+mkdir -p "$CONFIG_DIR"
+
+show_help() {
+    cat <<EOF
+statd float $VERSION — Frameless always-on-top floating desktop HUD
+https://github.com/Jaseunda/statd
+
+Usage:
+  statd float [options] [-- statd_options]
+
+Features:
+  - Frameless & Raw: No titlebar, no window buttons (no traffic lights)
+  - OLED Display Optimized: Deep pure blacks (#000000) & vibrant neon indicators
+  - Detached Desktop Widget: Runs independently so closing your terminal won't close the HUD
+  - Draggable: Click and drag anywhere on the HUD background to move
+  - Always-on-top: Floats above all apps, browsers, and workspaces
+  - Dynamic Height: Auto-adapts to exact active content rows
+  - 60–120 FPS: Native Apple Silicon ProMotion hardware acceleration
+  - Zero external packages: Pure native Cocoa Swift on macOS / Tkinter on Linux
+
+Options:
+  --stop, --kill       Close any active floating HUD instance
+  --status             Check if floating HUD is currently running
+  -F, --foreground     Run in the foreground (attached to terminal)
+  --opacity <val>      Set window opacity (0.2 to 1.0, default: 0.94)
+  --check              Check if GUI environment and dependencies are ready
+  -v, --version        Print version and exit
+  -h, --help           Show this help message
+
+HUD Controls (while focused):
+  Click + Drag         Reposition window anywhere on screen
+  + / =                Increase opacity
+  -                    Decrease opacity
+  c                    Toggle per-core CPU sparklines
+  g                    Toggle GPU row
+  n                    Toggle network row
+  l                    Toggle load average row
+  s                    Toggle swap row
+  d                    Toggle disk row
+  b                    Toggle battery row
+  f / w                Toggle full-width stretch
+  q / Esc              Quit floating HUD
+
+EOF
+}
+
+# Resolve statd binary
+resolve_statd() {
+    if [ -x "$SCRIPT_DIR/../../statd" ]; then
+        cd "$SCRIPT_DIR/../.." && pwd -P | sed 's#$#/statd#'
+    elif command -v statd >/dev/null 2>&1; then
+        command -v statd
+    elif [ -x "$(pwd)/statd" ]; then
+        printf '%s/statd' "$(pwd)"
+    else
+        printf 'statd'
+    fi
+}
+
+OS_TYPE="$(uname -s)"
+
+# GUI Detection Check
+check_gui() {
+    if [ "$OS_TYPE" = "Darwin" ]; then
+        if ! pgrep -x WindowServer >/dev/null 2>&1; then
+            printf '\033[31mError:\033[0m No active macOS desktop session detected.\n' >&2
+            printf 'statd float requires an active graphical macOS desktop (WindowServer).\n' >&2
+            return 1
+        fi
+        if ! command -v swiftc >/dev/null 2>&1; then
+            printf '\033[31mError:\033[0m swiftc compiler not found.\n' >&2
+            printf 'Please install Apple Command Line Tools: xcode-select --install\n' >&2
+            return 1
+        fi
+        return 0
+    else
+        # Linux
+        if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+            printf '\033[31mError:\033[0m No active desktop display detected ($DISPLAY or $WAYLAND_DISPLAY).\n' >&2
+            printf 'statd float requires an active Linux desktop session (X11 or Wayland).\n' >&2
+            return 1
+        fi
+        if ! python3 -c "import tkinter, pty" >/dev/null 2>&1; then
+            printf '\033[31mError:\033[0m python3-tk (tkinter) is required on Linux.\n' >&2
+            return 1
+        fi
+        return 0
+    fi
+}
+
+stop_float() {
+    local stopped=0
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            stopped=1
+        fi
+        rm -f "$PID_FILE"
+    fi
+    pkill -f "statd-float-macos" 2>/dev/null && stopped=1 || true
+    pkill -f "float_linux.py" 2>/dev/null && stopped=1 || true
+    if (( stopped )); then
+        printf '  \033[32m✔\033[0m Floating HUD stopped.\n'
+    else
+        printf '  Floating HUD is not running.\n'
+    fi
+}
+
+status_float() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf '  \033[32m●\033[0m Floating HUD is running (PID: %s).\n' "$pid"
+            return 0
+        fi
+    fi
+    if pgrep -f "statd-float-macos" >/dev/null 2>&1 || pgrep -f "float_linux.py" >/dev/null 2>&1; then
+        printf '  \033[32m●\033[0m Floating HUD is running.\n'
+        return 0
+    fi
+    printf '  \033[2m○\033[0m Floating HUD is not running.\n'
+    return 1
+}
+
+FOREGROUND=0
+PASSTHROUGH_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            printf 'statd-float %s\n' "$VERSION"
+            exit 0
+            ;;
+        --stop|--kill)
+            stop_float
+            exit 0
+            ;;
+        --status)
+            status_float
+            exit $?
+            ;;
+        -F|--foreground)
+            FOREGROUND=1
+            shift
+            ;;
+        --check)
+            if check_gui; then
+                printf '\033[32m✔\033[0m Graphical environment and runtime are ready for statd float (%s).\n' "$OS_TYPE"
+                exit 0
+            else
+                exit 1
+            fi
+            ;;
+        *)
+            PASSTHROUGH_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if ! check_gui; then
+    exit 1
+fi
+
+STATD_BIN="$(resolve_statd)"
+
+if [ "$OS_TYPE" = "Darwin" ]; then
+    mkdir -p "$CACHE_DIR"
+    CACHE_BIN="$CACHE_DIR/statd-float-macos"
+    SWIFT_SRC="$SCRIPT_DIR/float_macos.swift"
+
+    if [ ! -f "$CACHE_BIN" ] || [ "$SWIFT_SRC" -nt "$CACHE_BIN" ]; then
+        swiftc -O "$SWIFT_SRC" -o "$CACHE_BIN"
+    fi
+
+    # Kill existing instance if already running
+    if [ -f "$PID_FILE" ]; then
+        old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            kill "$old_pid" 2>/dev/null || true
+            sleep 0.2
+        fi
+    fi
+
+    if (( FOREGROUND )); then
+        exec "$CACHE_BIN" "$STATD_BIN" "${PASSTHROUGH_ARGS[@]}"
+    else
+        nohup "$CACHE_BIN" "$STATD_BIN" "${PASSTHROUGH_ARGS[@]}" >/dev/null 2>&1 &
+        HUD_PID=$!
+        echo "$HUD_PID" > "$PID_FILE"
+        disown "$HUD_PID" 2>/dev/null || true
+        printf '\n  \033[32m●\033[0m  \033[1mStatD Float\033[0m is now floating on your desktop.\n'
+        printf '     • Drag anywhere on the HUD background to move.\n'
+        printf '     • Press \033[1mq\033[0m or \033[1mEsc\033[0m on the HUD to close.\n'
+        printf '     • Stop anytime from terminal: \033[1mstatd float --stop\033[0m\n\n'
+        exit 0
+    fi
+else
+    # Linux
+    if (( FOREGROUND )); then
+        exec python3 "$SCRIPT_DIR/float_linux.py" "$STATD_BIN" "${PASSTHROUGH_ARGS[@]}"
+    else
+        nohup python3 "$SCRIPT_DIR/float_linux.py" "$STATD_BIN" "${PASSTHROUGH_ARGS[@]}" >/dev/null 2>&1 &
+        HUD_PID=$!
+        echo "$HUD_PID" > "$PID_FILE"
+        disown "$HUD_PID" 2>/dev/null || true
+        printf '\n  \033[32m●\033[0m  \033[1mStatD Float\033[0m is now floating on your desktop.\n'
+        printf '     • Drag anywhere on the HUD background to move.\n'
+        printf '     • Press \033[1mq\033[0m or \033[1mEsc\033[0m on the HUD to close.\n'
+        printf '     • Stop anytime from terminal: \033[1mstatd float --stop\033[0m\n\n'
+        exit 0
+    fi
+fi
