@@ -182,6 +182,41 @@ bar_gradient() {
                     g=$(( 215 + (70  - 215) * t / 1000 ))
                     b=0
                     ;;
+                bubblegum|candy)
+                    r=$(( 255 + (220 - 255) * t / 1000 ))
+                    g=$(( 110 + (160 - 110) * t / 1000 ))
+                    b=$(( 180 + (240 - 180) * t / 1000 ))
+                    ;;
+                aurora)
+                    r=$(( 0   + (80  - 0)   * t / 1000 ))
+                    g=$(( 245 + (210 - 245) * t / 1000 ))
+                    b=$(( 180 + (110 - 180) * t / 1000 ))
+                    ;;
+                peach|peaches)
+                    r=$(( 255 + (255 - 255) * t / 1000 ))
+                    g=$(( 135 + (185 - 135) * t / 1000 ))
+                    b=$(( 110 + (50  - 110) * t / 1000 ))
+                    ;;
+                nebula)
+                    r=$(( 150 + (230 - 150) * t / 1000 ))
+                    g=$(( 50  + (90  - 50)  * t / 1000 ))
+                    b=$(( 235 + (255 - 235) * t / 1000 ))
+                    ;;
+                cyberlime|toxic)
+                    r=$(( 190 + (50  - 190) * t / 1000 ))
+                    g=$(( 255 + (255 - 255) * t / 1000 ))
+                    b=$(( 10  + (160 - 10)  * t / 1000 ))
+                    ;;
+                lavender)
+                    r=$(( 185 + (145 - 185) * t / 1000 ))
+                    g=$(( 150 + (175 - 150) * t / 1000 ))
+                    b=$(( 245 + (255 - 245) * t / 1000 ))
+                    ;;
+                autumn)
+                    r=$(( 235 + (215 - 235) * t / 1000 ))
+                    g=$(( 90  + (155 - 90)  * t / 1000 ))
+                    b=$(( 20  + (10  - 20)  * t / 1000 ))
+                    ;;
                 load|*)
                     if (( t <= 500 )); then
                         tt=$(( t * 2 ))
@@ -249,6 +284,14 @@ PRESET_THEMES=(
     "flame|flame|amber|lava|gold|flame|lava|Burning solar flare (Golden, Lava)"
     "miami|cyan|rose|purple|mag|gold|cyan|South Beach Vice (Turquoise, Hot Pink)"
     "matcha|forest|emerald|forest|gold|matrix|emerald|Zen Japanese tea garden (Matcha, Jade)"
+    "bubblegum|bubblegum|cyan|purple|bubblegum|cyan|bubblegum|Sweet candy pop (Pink, Cyan, Lilac)"
+    "aurora|aurora|cyan|emerald|aurora|cyan|aurora|Northern lights (Teal, Emerald, Cyan)"
+    "vaporwave|peach|cyan|purple|mag|peach|purple|90s retro aesthetic (Peach, Teal, Lilac)"
+    "nebula|nebula|cyan|mag|nebula|ocean|nebula|Deep space cosmic cloud (Violet, Pink)"
+    "peaches|peach|amber|peach|gold|amber|peach|Sun-ripened orchard (Peach, Mango, Gold)"
+    "cyberlime|cyberlime|cyan|matrix|cyberlime|gold|cyberlime|High-voltage neon (Lime, Toxic Yellow)"
+    "lavender|lavender|rose|lavender|purple|cyan|lavender|Calming botanical (Lavender, Periwinkle)"
+    "autumn|autumn|lava|amber|gold|lava|autumn|Crisp fall foliage (Maple, Amber, Gold)"
 )
 
 # Set variable in config file
@@ -282,7 +325,8 @@ Usage:
                                 Colors:  cyan, amber, purple, matrix, nord, load, mag,
                                          tokyo, gruvbox, forest, rose, ocean, emerald,
                                          lava, gold, sakura, stealth, glacier, mocha,
-                                         amethyst, flame
+                                         amethyst, flame, bubblegum, aurora, peach,
+                                         nebula, cyberlime, lavender, autumn
                                          or custom RGB: R1,G1,B1:R2,G2,B2
   statd theme create <name>    Create a custom theme
   statd theme update           Update the theme plugin to latest version

@@ -82,3 +82,14 @@ statd theme reset
 | `flame` | Burning solar flare (Golden Blaze, Flame, Lava) |
 | `miami` | Sun-drenched South Beach Vice (Turquoise, Hot Pink, Gold) |
 | `matcha` | Zen Japanese tea garden (Matcha, Jade, Bamboo) |
+| `bubblegum` | Sweet candy pop (Bubblegum Pink, Sky Blue, Lilac) |
+| `aurora` | Northern lights (Polar Teal, Emerald, Cyan) |
+| `vaporwave` | 90s retro aesthetic (Neon Peach, Tropical Teal, Lilac) |
+| `nebula` | Deep space cosmic stellar cloud (Violet, Nebula Pink) |
+| `peaches` | Sun-ripened orchard (Juicy Peach, Mango Gold, Coral) |
+| `cyberlime` | High-voltage neon (Electric Lime, Toxic Yellow) |
+| `lavender` | Calming botanical garden (Lavender, Periwinkle) |
+| `autumn` | Crisp fall foliage (Maple Crimson, Burnt Amber, Gold) |
+
+> **Light & Dark Terminal Ready:** All 32 themes use calibrated 256-color saturation and transparent background tracks that automatically harmonize with both dark and light terminal color schemes.
+
