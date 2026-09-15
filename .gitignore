@@ -4,3 +4,4 @@
 /lib/plugins/
 __pycache__/
 *.pyc
+docs/
