@@ -1937,7 +1937,7 @@ while true; do
         VALP+=("$ROW_PLAIN"); VALC+=("$ROW_COLORED"); ROWPCT+=("$SWAP_PCT"); ROWMODE+=("${BAR_MODE_SWP:-mag}")
     fi
 
-    if (( SHOW_POOL )); then
+    if (( SHOW_POOL )) && (( POOL_TOTAL_B > 0 )); then
         row_start
         seg "${WORKLOAD_POOL_LABEL}" "$C_BOLD"
         seg " $(printf '%3d' "$POOL_PCT")" "$(pct_color "$POOL_PCT")"
