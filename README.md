@@ -81,107 +81,32 @@ statd --no-ld --no-bat  # Run without load average or battery
 
 ## Plugins (Optional Features)
 
-StatD keeps the terminal HUD minimal and bloat-free, but allows adding extra features via on-demand plugins:
+StatD keeps the terminal HUD minimal, lightweight, and bloat-free, while providing optional capabilities through standalone official plugins:
+
+| Plugin | Command | Description | Documentation |
+|--------|---------|-------------|---------------|
+| **Theme** | `statd theme` | 24 curated color palettes, interactive live picker, and custom RGB gradients | [Theme Plugin Guide](plugins/theme/README.md) |
+| **API** | `statd api` | Ultra-low CPU HTTP server with JSON snapshots & Server-Sent Events (SSE) streaming | [API Plugin Guide](plugins/api/README.md) |
+| **MCP** | `statd mcp` | Model Context Protocol server for AI coding assistants (Claude, Cursor, Antigravity) | [MCP Plugin Guide](plugins/mcp/README.md) |
+
+### Plugin Management
 
 ```sh
-# List plugins
+# List available and installed plugins
 statd plugins
 
-# Install the streaming API plugin
-statd install api
-```
-
-### Streaming API Plugin (`statd api`)
-
-Expose real-time metrics over an ultra-low CPU HTTP server with JSON and Server-Sent Events (SSE):
-
-```sh
-# Start API server on http://localhost:8080
-statd api
-
-# Run as background daemon
-statd api --daemon --port 8080
-statd api status
-statd api stop
-
-# Query snapshot via curl or script
-curl http://localhost:8080/stats
-```
-
-Connect web dashboards and custom interfaces in real-time with zero polling:
-
-```javascript
-const sse = new EventSource("http://localhost:8080/stream");
-sse.onmessage = (e) => {
-  const stats = JSON.parse(e.data);
-  console.log(`CPU: ${stats.cpu.percent}% | RAM: ${stats.memory.percent}%`);
-};
-```
-
-### Theme & Palette Plugin (`statd theme`)
-
-Customize bar colors or switch between premade color palettes with live visual previews:
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/statd-theme-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/statd-theme-light.png">
-    <img src="assets/statd-theme.png" alt="statd theme selector" width="100%">
-  </picture>
-</p>
-
-```sh
-# Install the theme plugin
+# Install an official plugin
 statd install theme
-
-# Launch interactive theme picker
-statd theme
-
-# List available themes with live previews
-statd theme list
-
-# Switch to a premade theme
-statd theme set cyberpunk
-statd theme set nord
-statd theme set dracula
-statd theme set matrix
-statd theme set sunset
-
-# Customize an individual metric color or custom RGB gradient
-statd theme set-color gpu amber
-statd theme set-color gpu 0,255,200:0,100,255
-```
-
-### AI Model Context Protocol Plugin (`statd mcp`)
-
-Expose real-time hardware telemetry and local LLM performance (`llama.cpp` / Ollama) directly to AI coding assistants (**Claude Desktop**, **Cursor**, **Antigravity**, **Windsurf**, **Zed**) over standard JSON-RPC `stdio`:
-
-```sh
-# Install the MCP plugin
+statd install api
 statd install mcp
 
-# Test tool execution locally
-statd mcp --test
+# Update plugins
+statd update plugins         # update all installed plugins
+statd update theme           # update a specific plugin
+
+# Remove a plugin
+statd remove <plugin>
 ```
-
-Configure in Claude Desktop (`claude_desktop_config.json`) or Cursor / Antigravity (`mcp_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "statd": {
-      "command": "statd",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-AI assistants can then automatically query:
-- `statd_get_metrics`: CPU, per-core load, RAM, swap, disk, temperature, and battery.
-- `statd_get_llm_metrics`: Local LLM inference speed (tokens/sec), KV cache ratio, process PID.
-- `statd_get_system_info`: Hardware specs, OS, kernel, cores, architecture, uptime.
-- `statd_diagnose_bottlenecks`: Automated analysis of thermal throttling, memory pressure, or swap thrashing.
 
 
 ## About & System Info (`statd about`)
@@ -247,6 +172,7 @@ curl -fsSL https://raw.githubusercontent.com/Jaseunda/statd/main/dist/statd | ba
 | `plugins update [name]` | Update installed plugin or all plugins |
 | `api [options]` | Start the streaming API server (after `install api`) |
 | `theme [options]` | Manage themes and colors (after `install theme`) |
+| `mcp [options]` | Model Context Protocol server for AI coding assistants |
 | `-f, --full` | Stretch to fill terminal width (auto on mini displays) |
 | `-u, --update` | Update statd to latest version |
 | `--check-update` | Check for updates |
