@@ -120,11 +120,22 @@ sse.onmessage = (e) => {
 
 ### Theme & Palette Plugin (`statd theme`)
 
-Customize bar colors or switch between premade color palettes:
+Customize bar colors or switch between premade color palettes with live visual previews:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/statd-theme-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/statd-theme-light.png">
+    <img src="assets/statd-theme.png" alt="statd theme selector" width="100%">
+  </picture>
+</p>
 
 ```sh
 # Install the theme plugin
 statd install theme
+
+# Launch interactive theme picker
+statd theme
 
 # List available themes with live previews
 statd theme list

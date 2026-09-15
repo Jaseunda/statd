@@ -2,6 +2,14 @@
 
 Color themes and custom gradient palette manager for [StatD](https://github.com/Jaseunda/statd).
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../assets/statd-theme-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="../../assets/statd-theme-light.png">
+    <img src="../../assets/statd-theme.png" alt="statd theme selector" width="100%">
+  </picture>
+</p>
+
 ## Install
 
 ```sh
