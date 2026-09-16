@@ -111,7 +111,7 @@ _linux_get_workload_pool() {
     local cap_gb="${WORKLOAD_POOL_CAP_GB:-32}"
     local used_bytes=0
 
-    # --- 1. Local directory path ---
+    # --- 1. Explicit local directory ---
     if [ -n "$dir" ] && [ -d "$dir" ]; then
         used_bytes=$(du -sb "$dir" 2>/dev/null | awk '{print $1}')
         [ -z "$used_bytes" ] && used_bytes=0
@@ -119,7 +119,23 @@ _linux_get_workload_pool() {
         return
     fi
 
-    # --- 2. Remote SSH fetch (only when WORKLOAD_POOL_HOST is set) ---
+    # --- 2. Auto-detect common pool locations ---
+    if [ -z "$dir" ]; then
+        local _d
+        for _d in \
+            "$HOME/storage/shared/workload-pool" \
+            "$HOME/.workload-pool" \
+            "/var/lib/workload-pool"; do
+            if [ -d "$_d" ]; then
+                used_bytes=$(du -sb "$_d" 2>/dev/null | awk '{print $1}')
+                [ -z "$used_bytes" ] && used_bytes=0
+                printf '%d %d\n' "$used_bytes" "$(( cap_gb * 1024 * 1024 * 1024 ))"
+                return
+            fi
+        done
+    fi
+
+    # --- 3. Remote SSH fetch (only when WORKLOAD_POOL_HOST is set) ---
     local host="${WORKLOAD_POOL_HOST:-}"
     local port="${WORKLOAD_POOL_SSH_PORT:-22}"
     if [ -n "$host" ] && command -v ssh >/dev/null 2>&1; then
